@@ -1,0 +1,60 @@
+[job]
+description = "Qwen3-1.7B-Base HF weight loading smoke test"
+dump_folder = "/workspace/yans2@xiaopeng.com/agentic_rl/runs/qwen3_1.7b_base_single_gpu_smoke"
+print_config = true
+
+[model]
+name = "qwen3"
+flavor = "1.7B"
+hf_assets_path = "/tmp/agentic_rl_models/Qwen3-1.7B-Base"
+
+[optimizer]
+name = "AdamW"
+lr = 1.0e-6
+beta1 = 0.9
+beta2 = 0.95
+eps = 1.0e-8
+weight_decay = 0.1
+implementation = "fused"
+
+[lr_scheduler]
+warmup_steps = 1
+decay_ratio = 0.8
+decay_type = "cosine"
+min_lr_factor = 0.1
+
+[training]
+dataset = "agentic_jsonl"
+dataset_path = "/workspace/yans2@xiaopeng.com/agentic_rl/datasets/processed/xlam-function-calling-60k/train.jsonl"
+local_batch_size = 1
+global_batch_size = 1
+seq_len = 1024
+max_norm = 1.0
+steps = 2
+dtype = "bfloat16"
+mixed_precision_param = "bfloat16"
+
+[parallelism]
+data_parallel_replicate_degree = 1
+data_parallel_shard_degree = 1
+tensor_parallel_degree = 1
+pipeline_parallel_degree = 1
+context_parallel_degree = 1
+
+[checkpoint]
+enable = true
+folder = "checkpoint"
+interval = 2
+initial_load_path = "/tmp/agentic_rl_models/Qwen3-1.7B-Base"
+initial_load_model_only = true
+initial_load_in_hf = true
+last_save_model_only = false
+
+[metrics]
+log_freq = 1
+enable_tensorboard = true
+disable_color_printing = true
+
+[comm]
+init_timeout_seconds = 600
+train_timeout_seconds = 600
