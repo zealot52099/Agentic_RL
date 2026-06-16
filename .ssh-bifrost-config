@@ -1,0 +1,8 @@
+Host bifrost-agentic-rl
+    HostName bifrost-2026051921173700-yans2-master-0.default.svc.cluster.local
+    Port 22387
+    User root
+    ForwardAgent yes
+    IdentityFile C:/Users/Xpeng/.ssh/id_rsa
+    StrictHostKeyChecking accept-new
+    ProxyCommand "C:/Program Files/Git/usr/bin/ssh.exe" -F C:/Users/Xpeng/.ssh/config -W %h:%p user-ssh-fuyao-c1.xiaopeng.link

@@ -37,7 +37,7 @@
 
 ```bash
 # 1. 安装
-git clone https://github.com/zealot52099/Agentic_RL-.git && cd Agentic_RL-
+git clone https://github.com/zealot52099/Agentic_RL.git && cd Agentic_RL
 pip install -r requirements.txt
 
 # 2. 生成数据
@@ -59,6 +59,7 @@ python scripts/run_eval.py --model_path ./output/grpo_model --eval_data ./data/t
 │   ├── train/           # SFT训练 + GRPO训练
 │   └── eval/            # 工具精度评测 + BFCL评测 + 基准运转
 ├── scripts/             # 运行脚本 (数据/训练/评测)
+├── docs/                # 技术调研与实验文档
 ├── USAGE_MANUAL.md      # 完整使用手册
 └── requirements.txt
 ```
@@ -85,6 +86,9 @@ python scripts/run_eval.py --model_path ./output/grpo_model --eval_data ./data/t
 
 - **[USAGE_MANUAL.md](USAGE_MANUAL.md)** — 完整使用手册（5步上手、调参指南、FAQ）
 - **[agentic_RL_技术方案.md](agentic_RL_技术方案.md)** — 理论背景与完整技术方案
+- **[Agentic RL 技术调研与训练方案](docs/agentic_rl_technical_research_and_training_plan.md)** — 技术调研主文档
+- **[训练框架选型与首次训练验证](docs/training_framework_selection_and_smoke.md)** — 框架选型记录
+- **[基线评测与 SFT 实验日志](docs/experiments/2026-06-09_baseline_eval_and_sft.md)** — 实验记录
 
 ## License
 
