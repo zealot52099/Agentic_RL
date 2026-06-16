@@ -1,0 +1,49 @@
+# GRPO Training Configuration
+# Task Orchestration + Accurate Tool Calling
+
+training:
+  # ---- Core GRPO Params ----
+  num_train_epochs: 3
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 32
+  effective_batch_size: 128          # 4 * 32 = 128
+
+  learning_rate: 2.0e-5
+  lr_scheduler_type: "cosine"
+  warmup_ratio: 0.1
+  max_grad_norm: 1.0
+
+  # ---- GRPO-Specific ----
+  num_generations: 8                 # Group size G (8 responses per prompt)
+  max_prompt_length: 2048
+  max_completion_length: 4096        # Enough for tool call chains
+  beta: 0.01                         # KL coefficient (0.001 DeepSeek style; 0.04 safer)
+  epsilon: 0.2                       # Clip ratio
+
+  # ---- Optimization ----
+  optim: "adamw_8bit"
+  weight_decay: 0.01
+  bf16: true
+  tf32: true
+
+  # ---- Logging & Checkpointing ----
+  logging_steps: 10
+  save_steps: 200
+  eval_steps: 200
+  save_total_limit: 3
+  report_to: ["wandb", "tensorboard"]
+
+# ---- Reward Weights ----
+# Multi-dimensional reward for tool calling
+rewards:
+  tool_call_accuracy: 0.45           # Function name + parameters correct
+  json_validity: 0.20                # Output is valid JSON
+  task_completion: 0.25              # Final task objective achieved
+  efficiency: 0.10                   # Minimal tool calls to achieve goal
+
+# ---- vLLM Rollout ----
+vllm:
+  enabled: true
+  gpu_memory_utilization: 0.6
+  tensor_parallel_size: 1
+  max_model_len: 8192

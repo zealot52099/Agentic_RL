@@ -1,0 +1,40 @@
+# Data Pipeline Configuration
+
+data:
+  # ---- Synthetic Data Generation ----
+  synthetic:
+    num_samples: 10000               # Total synthetic tool-call examples
+    tools_per_scenario: [1, 5]       # Min/max tools per scenario
+    max_turns: 5                     # Max multi-turn interactions
+    difficulty_distribution:
+      easy: 0.2                      # Single tool, simple params
+      medium: 0.5                    # Multi-tool, dependent calls
+      hard: 0.3                      # Complex orchestration, error recovery
+
+  # ---- Tool Schema Library ----
+  tools:
+    categories:
+      - "search"                     # Web/knowledge search
+      - "calculator"                 # Math computation
+      - "database"                   # CRUD operations
+      - "api_call"                   # External API invocation
+      - "file_ops"                   # File read/write
+      - "code_exec"                  # Code execution
+      - "email"                      # Communication
+      - "calendar"                   # Scheduling
+    max_tools_per_category: 10
+
+  # ---- Data Cleaning ----
+  cleaning:
+    dedup_method: "minhash"          # minhash | exact | embedding
+    minhash_threshold: 0.85
+    min_tool_calls_per_sample: 1
+    max_tool_calls_per_sample: 10
+    require_valid_json: true
+    filter_invalid_params: true
+
+  # ---- Train/Val/Test Split ----
+  split:
+    train_ratio: 0.8
+    val_ratio: 0.1
+    test_ratio: 0.1

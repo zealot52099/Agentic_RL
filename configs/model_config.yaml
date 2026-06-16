@@ -1,0 +1,31 @@
+# Model Configuration for Tool-Calling Agentic RL
+
+# ---- Base Model ----
+# Recommended: Qwen2.5-7B-Instruct (Apache 2.0, native function calling)
+model:
+  name_or_path: "Qwen/Qwen2.5-7B-Instruct"
+  torch_dtype: "bfloat16"
+  attn_implementation: "flash_attention_2"   # or "sdpa" if flash not available
+  use_cache: false                            # Disable during training
+
+# ---- LoRA Configuration (for memory-efficient training) ----
+lora:
+  enabled: true
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+
+# ---- Alternative Base Models ----
+# Uncomment based on your needs:
+# model__qwen_agent: "chendren/Qwen3-8B-LAM-v4"       # Specialized Agent LAM
+# model__aura: "Featherlabs/Aura-7b"                    # Function-calling fine-tuned
+# model__deepseek_coder: "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct"
+# model__glm_agent: "THUDM/GLM-4.7-Flash"              # Efficient MoE Agent
