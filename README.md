@@ -89,6 +89,7 @@ python scripts/run_eval.py --model_path ./output/grpo_model --eval_data ./data/t
 - **[Agentic RL 技术调研与训练方案](docs/agentic_rl_technical_research_and_training_plan.md)** — 技术调研主文档
 - **[训练框架选型与首次训练验证](docs/training_framework_selection_and_smoke.md)** — 框架选型记录
 - **[基线评测与 SFT 实验日志](docs/experiments/2026-06-09_baseline_eval_and_sft.md)** — 实验记录
+- **[Agentic RL 全流程掌握与小模型训练修订方案](docs/agentic_rl_mastery_and_small_model_training_plan.md)** — 数据准备、后训练、RLVR、评测和小模型优化路线
 
 ## License
 

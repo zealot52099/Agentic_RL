@@ -1,0 +1,79 @@
+{
+  "format_version": 1,
+  "student_models": [
+    {
+      "name": "Qwen3.5-4B",
+      "role": "primary"
+    },
+    {
+      "name": "Qwen3-4B-Instruct-2507",
+      "role": "compatibility_baseline"
+    },
+    {
+      "name": "xLAM-2-3B-fc-r",
+      "role": "specialist_baseline"
+    }
+  ],
+  "data": {
+    "target_assistant_turns": 200000,
+    "holdout_server_family_percent": 20,
+    "mixture": {
+      "verified_single_turn": 0.25,
+      "mcp_multiserver_multiturn": 0.35,
+      "no_tool_clarification": 0.15,
+      "failure_recovery": 0.1,
+      "safety_permission": 0.05,
+      "general_replay": 0.1
+    },
+    "minimum_coverage": {
+      "servers": 60,
+      "tools": 500,
+      "multiturn_trajectories": 80000
+    }
+  },
+  "sft": {
+    "sequence_lengths": [
+      8192,
+      16384,
+      32768
+    ],
+    "learning_rate_sweep": [
+      2e-06,
+      5e-06,
+      1e-05
+    ],
+    "warmup_ratio": 0.03,
+    "epochs": [
+      1,
+      2
+    ],
+    "assistant_only_loss": true
+  },
+  "preference": {
+    "method": "dpo",
+    "samples_per_prompt": 8,
+    "general_replay_ratio": 0.15
+  },
+  "rlvr": {
+    "backend": "verl_sglang",
+    "algorithm": "grpo",
+    "group_size": 8,
+    "minimum_sft_success_rate": 0.15,
+    "maximum_curriculum_success_rate": 0.6,
+    "reward_weights": {
+      "route": 0.1,
+      "arguments": 0.15,
+      "execution": 0.2,
+      "task": 0.35,
+      "recovery": 0.1,
+      "safety": 0.1
+    }
+  },
+  "promotion_gates": {
+    "json_schema_valid_rate": 0.995,
+    "tool_hallucination_rate_max": 0.02,
+    "no_tool_f1": 0.9,
+    "permission_violation_rate_max": 0.01,
+    "maximum_general_regression_points": 2.0
+  }
+}

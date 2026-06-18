@@ -270,6 +270,197 @@ Assistant-only SFT step-100 的 256 条 held-out 样本：
 5. 达到门槛后再使用 verl 启动可验证奖励 RL；奖励分解为 JSON 合法性、工具名、
    参数 schema、参数值、调用数量和完整任务成功，避免单一总分奖励被投机。
 
+## SFT v2 启动记录
+
+启动时间：2026-06-09 21:09（Asia/Shanghai）。
+
+- Run：
+  `/workspace/yans2@xiaopeng.com/agentic_rl/runs/qwen3_1.7b_assistant_sft_v2_step500`
+- Base：`/tmp/agentic_rl_models/Qwen3-1.7B-Base`
+- 训练数据：64,000 条 SFT v2 mixture。
+- 数据配比：40% 参数困难、25% 3+ 工具、20% 普通工具、15% GSM8K replay。
+- 训练：4×H800、500 steps、global batch 32、BF16、completion-only loss。
+- 学习率：峰值 `5e-6`，25 steps warmup，cosine decay。
+- checkpoint：每 100 steps 保存 HF safetensors。
+- Launcher PID：`832944`。
+
+首次启动在参数更新前失败：4 个 rank 使用 `Path.read_text()` 同时从 NFS 整体读取
+226MB JSONL 时出现一次截断读取。离线逐行校验 64,000 条均合法。随后将 Dataset
+加载改为流式逐行解析并报告具体行号，第二次启动正常。
+
+为减少 Windows PowerShell、SSH 和远端 Bash 三层转义风险，代码和运行入口已迁移
+到 job：
+
+- 启动：`scripts/remote/launch_sft_v2.sh`
+- 监控：`scripts/remote/monitor_sft_v2.sh`
+- 代码快照：`code_snapshot_20260609_2112.tar.gz`
+- 快照 SHA256：
+  `03c079cea83d0d4d9d681c922fa929a9acd74573c10863e8458407d01db6973d`
+- 文件级清单：`code_manifest_20260609_2112.sha256`
+
+本地仍作为编辑和文档副本；训练、数据校验、日志、checkpoint 和评测均以 job
+服务器上的工作目录为运行源。
+
+## 夜间连续训练队列
+
+启动时间：2026-06-09 21:16（Asia/Shanghai）。
+
+目标是在当前 500-step pilot 完成后保持 GPU 连续工作，同时避免把全部预算押在
+单个可能过拟合的长任务上。队列 PID 为 `1191304`，预计运行 7.5–9 小时。
+
+实验矩阵：
+
+| Run | 困难参数阈值 | LR | Seed | Steps |
+|---|---:|---:|---:|---:|
+| `qwen3_1.7b_sft_v2a_hard77_lr2e6_seed10` | 77 | 2e-6 | 20260610 | 6000 |
+| `qwen3_1.7b_sft_v2b_hard90_lr2e6_seed11` | 90 | 2e-6 | 20260611 | 6000 |
+| `qwen3_1.7b_sft_v2c_hard77_lr1e6_seed12` | 77 | 1e-6 | 20260612 | 6000 |
+
+每组使用 4×H800、global batch 32，每 1,000 steps 保存 HF checkpoint。每组完成
+后并行执行：
+
+- GPU 0：xLAM held-out 工具调用评测。
+- GPU 1：GSM8K 与生成式 MMLU-Pro regression probe。
+- GPU 2：MMLU-Pro direct-logprob。
+
+队列具有以下保护：
+
+- 等待当前 pilot 正常退出，不抢占现有训练。
+- 每阶段检查 GPU 是否空闲，避免重叠启动。
+- 单个实验失败时记录 `exit_code` 并继续下一组。
+- 只有产生完整 `hf/model.safetensors` 才进入对应评测。
+- 完成后写入 `runs/overnight_sft_queue_20260609/COMPLETED`。
+
+服务器端入口：
+
+- 队列：`scripts/remote/run_overnight_sft_queue.sh`
+- 监控：`scripts/remote/monitor_overnight_queue.sh`
+- 队列日志：
+  `runs/overnight_sft_queue_20260609/queue.log`
+- 数据校验：
+  `runs/overnight_sft_queue_data.sha256`
+
+21:24 当前 500-step pilot 正常结束，队列在约 2 秒内启动第一组
+`qwen3_1.7b_sft_v2a_hard77_lr2e6_seed10`。四个训练 rank 已分别占用 GPU 0–3
+并完成 step 1。节点上另有 `/workspace/yangfc@xiaopeng.com/code/toy_cnn` 的双
+进程 torchrun，但通过 `nvidia-smi --query-compute-apps` 确认其未占用 GPU，
+因此未中断该任务。
+
+## Qwen 同体量模型对比队列
+
+启动时间：2026-06-09 21:29（Asia/Shanghai），队列 PID `1842167`。该队列等待
+夜间 SFT 队列写入 `COMPLETED` 后接管，不与当前训练争抢 GPU。
+
+第一阶段使用完全相同的 raw prompt 和 scorer 进行零样本横评：
+
+- `Qwen3-0.6B-Base`：尺寸下界。
+- `Qwen3-1.7B`：同架构官方后训练上界。
+- `Qwen2.5-1.5B`：上一代通用 Base。
+- `Qwen2.5-1.5B-Instruct`：上一代后训练上界。
+- `Qwen2.5-Coder-1.5B`：代码与结构化输出先验。
+- `Qwen2.5-Math-1.5B`：数学 replay 适配性对照。
+
+Instruct 模型仅作为零样本上界，不与 Base-to-SFT 增益直接比较。raw prompt
+横评确保 scorer 输入一致，但不代表 Instruct 模型的最佳 chat-template 成绩；
+后续应单独补充原生模板口径。
+
+第二阶段执行公平训练对照：
+
+| Base | 数据 | Steps | LR | Seed |
+|---|---|---:|---:|---:|
+| `Qwen2.5-1.5B` | SFT v2 hard77 | 6000 | 2e-6 | 20260613 |
+| `Qwen2.5-Coder-1.5B` | SFT v2 hard77 | 6000 | 2e-6 | 20260613 |
+
+两组均采用 global batch 32、completion-only loss、每 1,000 steps 保存，并在
+训练后运行与 Qwen3 完全相同的 xLAM、GSM8K 和 MMLU-Pro 评测。
+
+- 队列入口：`scripts/remote/run_qwen_model_comparison_queue.sh`
+- 监控入口：`scripts/remote/monitor_qwen_model_comparison.sh`
+- 队列日志：
+  `runs/qwen_model_comparison_queue_20260610/queue.log`
+
+## 扩展 Qwen 连续实验队列
+
+启动时间：2026-06-10 00:39（Asia/Shanghai），队列 PID `3321267`。该队列等待
+Qwen 同体量模型对比队列结束后接管，预计额外提供 8–12 小时训练和评测负载。
+
+| Base | Steps | LR | 目的 |
+|---|---:|---:|---|
+| `Qwen3-0.6B-Base` | 10000 | 3e-6 | Qwen3 尺寸下界 |
+| `Qwen2.5-0.5B` | 10000 | 3e-6 | 跨代小模型对照 |
+| `Qwen2.5-3B` | 6000 | 1.5e-6 | 规模扩展主对照 |
+| `Qwen3-4B-Base` | 4000 | 1e-6 | 容量上界和显存可行性 |
+
+所有实验使用同一 SFT v2 数据和 completion-only loss，每 2,000 steps 保存。
+训练成功后自动运行 xLAM、GSM8K 和 MMLU-Pro 评测。3B/4B 的成功判定同时支持
+单文件和分片 safetensors。若 4B 因 DDP 全参数优化器显存不足而失败，队列会记录
+exit code 并正常结束，不影响此前模型产物。
+
+- 队列入口：`scripts/remote/run_extended_qwen_queue.sh`
+- 监控入口：`scripts/remote/monitor_extended_qwen_queue.sh`
+- 队列日志：`runs/extended_qwen_queue_20260610/queue.log`
+
+截至 2026-06-10 00:39，三层队列预计仍有约 18–24 小时连续负载，覆盖当晚训练
+窗口。
+
+## WikiSQL 执行评测
+
+状态：数据与评测器完成，模型评测已排队。
+
+- 官方 WikiSQL archive：
+  `datasets/sources/wikisql/wikisql-data.tar.bz2`
+- Archive SHA256：
+  `755c728ab188e364575705c8641f3fafd86fb089cb8b08e8c03f01832aae0881`
+- 官方 test：15,878 条问题。
+- 固定 probe：按 `SHA256(table_id + question)` 选择 256 条。
+- Probe SHA256：
+  `4c3071d365c92f2af872d1c6bbbd62f1a8e24121dafbf39297e839e138e20da1`
+- Gold SQL 执行校验：256/256 成功且结果非空。
+
+指标：
+
+- SQL 提取率。
+- SQLite 可执行率。
+- 执行结果 exact match，结果行顺序不敏感。
+- 规范化 SQL exact match。
+
+安全与稳定性：
+
+- SQLite 数据库使用只读 URI 打开。
+- 仅允许 `SELECT`。
+- 每条 SQL 最长执行 2 秒。
+- prompt 明确给出 WikiSQL 真实列名 `col0...colN` 与自然语言表头映射。
+
+SQL 评测队列 PID `3274545`，等待扩展训练队列完成后依次评测当前主要模型：
+Qwen3-1.7B hard90、Qwen2.5-1.5B、Qwen2.5-Coder-1.5B，以及扩展队列中的
+0.5B、0.6B、3B 和 4B 模型。
+
+- 评测器：`scripts/remote/evaluate_wikisql.py`
+- 队列：`scripts/remote/run_wikisql_eval_queue.sh`
+- 监控：`scripts/remote/monitor_wikisql_eval.sh`
+- 输出：`evals/wikisql_20260610`
+
+### WikiSQL 即时代表模型结果
+
+2026-06-10 在扩展训练继续运行的同时，使用 GPU 1–3、30% vLLM 显存上限并行
+评测三款代表模型，三个任务均正常退出，未中断训练。
+
+| 模型 | SQL 提取 | 可执行 | 执行准确率 |
+|---|---:|---:|---:|
+| Qwen3-1.7B hard90 SFT | 100.00% | 96.88% | 37.11% |
+| Qwen2.5-1.5B SFT | 100.00% | 98.44% | 37.11% |
+| Qwen2.5-Coder-1.5B SFT | 100.00% | 98.05% | 37.50% |
+
+错误分型显示主要瓶颈是语义：
+
+- Qwen3-1.7B：95 正确、153 可执行但结果错误、5 列名错误、3 语法错误。
+- Qwen2.5-1.5B：95 正确、157 可执行但结果错误、3 列名错误、1 语法错误。
+- Qwen2.5-Coder-1.5B：96 正确、155 可执行但结果错误、3 列名错误、2 语法错误。
+
+因此后续优化重点应是列选择、聚合函数和 WHERE 条件语义，而不是 SQL 格式冷启动。
+规范化 SQL 字符串 exact match 对条件顺序、引号和等价写法过于敏感，本项目以
+SQLite execution accuracy 作为 SQL 主指标。
+
 ## 决策门槛
 
 - 若短训模型只降低训练 loss、held-out 无提升：停止此全 token 配方。

@@ -13,6 +13,19 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
+def load_tokenizer(model_path: str):
+    try:
+        return AutoTokenizer.from_pretrained(model_path, local_files_only=True)
+    except AttributeError as error:
+        if "'list' object has no attribute 'keys'" not in str(error):
+            raise
+        return AutoTokenizer.from_pretrained(
+            model_path,
+            local_files_only=True,
+            extra_special_tokens={},
+        )
+
+
 def stratified_rows(path: Path, limit: int) -> list[dict]:
     by_category: dict[str, list[dict]] = defaultdict(list)
     for row in pq.read_table(path).to_pylist():
@@ -58,7 +71,7 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=8)
     args = parser.parse_args()
 
-    tokenizer = AutoTokenizer.from_pretrained(args.model, local_files_only=True)
+    tokenizer = load_tokenizer(args.model)
     tokenizer.padding_side = "left"
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token

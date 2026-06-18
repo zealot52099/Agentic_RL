@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small full-parameter DDP SFT pilot with prompt loss masking."""
+"""Distributed LoRA SFT with global supervised-token normalization."""
 
 from __future__ import annotations
 
@@ -17,10 +17,13 @@ from pathlib import Path
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
+from peft import LoraConfig, get_peft_model
 from torch.nn.parallel import DistributedDataParallel
-from torch.utils.data import DataLoader, Dataset, DistributedSampler
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from torch.utils.data import DataLoader, DistributedSampler
+from transformers import AutoModelForCausalLM
 import transformers
+
+from train_assistant_only_sft import JsonlSftDataset, SftCollator, load_tokenizer
 
 try:
     import swanlab
@@ -28,87 +31,15 @@ except Exception:  # pragma: no cover - optional runtime dependency
     swanlab = None
 
 
-def load_tokenizer(model_path: str):
-    try:
-        return AutoTokenizer.from_pretrained(model_path, local_files_only=True)
-    except AttributeError as error:
-        if "'list' object has no attribute 'keys'" not in str(error):
-            raise
-        return AutoTokenizer.from_pretrained(
-            model_path,
-            local_files_only=True,
-            extra_special_tokens={},
-        )
-
-
-class JsonlSftDataset(Dataset):
-    def __init__(self, path: Path) -> None:
-        self.rows = []
-        with path.open("r", encoding="utf-8") as handle:
-            for line_number, line in enumerate(handle, start=1):
-                if not line.strip():
-                    continue
-                try:
-                    self.rows.append(json.loads(line))
-                except json.JSONDecodeError as error:
-                    raise ValueError(
-                        f"Invalid JSONL at {path}:{line_number}: {error}"
-                    ) from error
-
-    def __len__(self) -> int:
-        return len(self.rows)
-
-    def __getitem__(self, index: int) -> dict:
-        return self.rows[index]
-
-
 @dataclass
-class SftCollator:
-    tokenizer: object
-    seq_len: int
-
-    def _truncate_prompt(self, prompt: list[int], available: int) -> list[int]:
-        if len(prompt) <= available:
-            return prompt
-        prefix = min(128, available // 4)
-        return prompt[:prefix] + prompt[-(available - prefix) :]
-
+class WeightedSftCollator(SftCollator):
     def __call__(self, rows: list[dict]) -> dict[str, torch.Tensor]:
-        encoded = []
-        eos = self.tokenizer.eos_token_id
-        for row in rows:
-            prompt_ids = self.tokenizer.encode(
-                row["prompt"],
-                add_special_tokens=False,
-            )
-            completion_ids = self.tokenizer.encode(
-                row["completion"],
-                add_special_tokens=False,
-            )
-            if eos is not None:
-                completion_ids.append(eos)
-            completion_ids = completion_ids[: self.seq_len - 1]
-            available = self.seq_len - len(completion_ids)
-            prompt_ids = self._truncate_prompt(prompt_ids, available)
-            input_ids = prompt_ids + completion_ids
-            labels = [-100] * len(prompt_ids) + completion_ids
-            encoded.append((input_ids, labels))
-
-        max_len = max(len(item[0]) for item in encoded)
-        pad_id = self.tokenizer.pad_token_id
-        batch_input = []
-        batch_labels = []
-        batch_mask = []
-        for input_ids, labels in encoded:
-            padding = max_len - len(input_ids)
-            batch_input.append(input_ids + [pad_id] * padding)
-            batch_labels.append(labels + [-100] * padding)
-            batch_mask.append([1] * len(input_ids) + [0] * padding)
-        return {
-            "input_ids": torch.tensor(batch_input, dtype=torch.long),
-            "labels": torch.tensor(batch_labels, dtype=torch.long),
-            "attention_mask": torch.tensor(batch_mask, dtype=torch.long),
-        }
+        batch = super().__call__(rows)
+        batch["sample_weights"] = torch.tensor(
+            [float(row.get("loss_weight", 1.0)) for row in rows],
+            dtype=torch.float32,
+        )
+        return batch
 
 
 def cosine_lr(step: int, total_steps: int, warmup_steps: int) -> float:
@@ -123,16 +54,20 @@ def main() -> None:
     parser.add_argument("--model", required=True)
     parser.add_argument("--train-data", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--steps", type=int, default=100)
+    parser.add_argument("--steps", type=int, required=True)
     parser.add_argument("--seq-len", type=int, default=2048)
     parser.add_argument("--micro-batch-size", type=int, default=1)
-    parser.add_argument("--grad-accum-steps", type=int, default=8)
-    parser.add_argument("--learning-rate", type=float, default=5e-6)
-    parser.add_argument("--warmup-steps", type=int, default=10)
-    parser.add_argument("--seed", type=int, default=20260609)
-    parser.add_argument("--log-every", type=int, default=5)
-    parser.add_argument("--save-every", type=int, default=0)
+    parser.add_argument("--grad-accum-steps", type=int, default=4)
+    parser.add_argument("--learning-rate", type=float, default=2e-5)
+    parser.add_argument("--warmup-steps", type=int, default=20)
+    parser.add_argument("--weight-decay", type=float, default=0.0)
     parser.add_argument("--max-grad-norm", type=float, default=1.0)
+    parser.add_argument("--lora-r", type=int, default=32)
+    parser.add_argument("--lora-alpha", type=int, default=64)
+    parser.add_argument("--lora-dropout", type=float, default=0.05)
+    parser.add_argument("--seed", type=int, default=20260616)
+    parser.add_argument("--log-every", type=int, default=10)
+    parser.add_argument("--save-every", type=int, default=0)
     parser.add_argument("--swanlab-project")
     parser.add_argument("--swanlab-run-name")
     parser.add_argument("--swanlab-workspace")
@@ -154,22 +89,46 @@ def main() -> None:
     tokenizer = load_tokenizer(args.model)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
-
-    model = AutoModelForCausalLM.from_pretrained(
+    base_model = AutoModelForCausalLM.from_pretrained(
         args.model,
         local_files_only=True,
         dtype=torch.bfloat16,
         attn_implementation="flash_attention_2",
-    ).to(device)
-    model.config.use_cache = False
-    model.gradient_checkpointing_enable(
+    )
+    base_model.config.use_cache = False
+    base_model.gradient_checkpointing_enable(
         gradient_checkpointing_kwargs={"use_reentrant": False}
     )
+    base_model.enable_input_require_grads()
+    model = get_peft_model(
+        base_model,
+        LoraConfig(
+            r=args.lora_r,
+            lora_alpha=args.lora_alpha,
+            lora_dropout=args.lora_dropout,
+            bias="none",
+            task_type="CAUSAL_LM",
+            target_modules=[
+                "q_proj",
+                "k_proj",
+                "v_proj",
+                "o_proj",
+                "gate_proj",
+                "up_proj",
+                "down_proj",
+            ],
+        ),
+        autocast_adapter_dtype=True,
+    ).to(device)
+    for name, parameter in model.named_parameters():
+        if parameter.requires_grad and parameter.dtype != torch.float32:
+            parameter.data = parameter.data.float()
     model = DistributedDataParallel(
         model,
         device_ids=[local_rank],
         output_device=local_rank,
         gradient_as_bucket_view=True,
+        find_unused_parameters=False,
     )
 
     dataset = JsonlSftDataset(args.train_data)
@@ -185,19 +144,19 @@ def main() -> None:
         dataset,
         batch_size=args.micro_batch_size,
         sampler=sampler,
-        collate_fn=SftCollator(tokenizer, args.seq_len),
+        collate_fn=WeightedSftCollator(tokenizer, args.seq_len),
         num_workers=2,
         pin_memory=True,
         persistent_workers=True,
     )
     iterator = iter(loader)
-
+    trainable = [parameter for parameter in model.parameters() if parameter.requires_grad]
     optimizer = torch.optim.AdamW(
-        model.parameters(),
+        trainable,
         lr=args.learning_rate,
         betas=(0.9, 0.95),
         eps=1e-8,
-        weight_decay=0.1,
+        weight_decay=args.weight_decay,
         fused=True,
     )
     scheduler = torch.optim.lr_scheduler.LambdaLR(
@@ -208,6 +167,7 @@ def main() -> None:
     swanlab_enabled = bool(args.swanlab_project)
     if rank == 0:
         args.output_dir.mkdir(parents=True, exist_ok=True)
+        trainable_count = sum(parameter.numel() for parameter in trainable)
         metadata = {
             **vars(args),
             "train_data": str(args.train_data),
@@ -216,15 +176,14 @@ def main() -> None:
             "global_batch_size": (
                 args.micro_batch_size * args.grad_accum_steps * world_size
             ),
-            "loss_mask": "completion tokens only",
-            "loss_reduction": "supervised-token mean across all ranks and accumulation steps",
+            "loss_reduction": "global supervised-token mean",
+            "trainable_parameters": trainable_count,
+            "trainable_dtype": sorted({str(p.dtype) for p in trainable}),
             "runtime": {
                 "hostname": platform.node(),
                 "python": platform.python_version(),
                 "torch": torch.__version__,
                 "transformers": transformers.__version__,
-                "cuda_available": torch.cuda.is_available(),
-                "device_count": torch.cuda.device_count(),
             },
         }
         (args.output_dir / "training_config.json").write_text(
@@ -250,16 +209,16 @@ def main() -> None:
     optimizer.zero_grad(set_to_none=True)
     started = time.time()
     tokens_seen = 0
+    sampler_epoch = 0
+    loss_ema = None
     interval_nll = 0.0
     interval_tokens = 0
     interval_grad_norm = 0.0
-    interval_clipped_steps = 0
+    interval_clipped = 0
     interval_steps = 0
-    loss_ema = None
-    sampler_epoch = 0
     for step in range(1, args.steps + 1):
         batches = []
-        local_supervised_tokens = torch.zeros((), device=device, dtype=torch.long)
+        local_weighted_tokens = torch.zeros((), device=device)
         for _ in range(args.grad_accum_steps):
             try:
                 batch = next(iterator)
@@ -268,12 +227,14 @@ def main() -> None:
                 sampler.set_epoch(sampler_epoch)
                 iterator = iter(loader)
                 batch = next(iterator)
-            local_supervised_tokens += (batch["labels"][:, 1:] != -100).sum().to(device)
+            supervised_mask = batch["labels"][:, 1:] != -100
+            local_weighted_tokens += (
+                supervised_mask.sum(dim=1) * batch["sample_weights"]
+            ).sum().to(device)
             batches.append(batch)
-
-        global_supervised_tokens = local_supervised_tokens.clone()
-        dist.all_reduce(global_supervised_tokens, op=dist.ReduceOp.SUM)
-        if global_supervised_tokens.item() == 0:
+        global_weighted_tokens = local_weighted_tokens.clone()
+        dist.all_reduce(global_weighted_tokens, op=dist.ReduceOp.SUM)
+        if global_weighted_tokens.item() == 0:
             raise RuntimeError(f"No supervised tokens at step {step}")
 
         local_nll = torch.zeros((), device=device)
@@ -282,49 +243,47 @@ def main() -> None:
                 key: value.to(device, non_blocking=True)
                 for key, value in batch.items()
             }
-            sync_context = (
+            sample_weights = batch.pop("sample_weights")
+            context = (
                 model.no_sync()
                 if batch_index < len(batches) - 1
                 else nullcontext()
             )
-            with sync_context:
-                output = model(
+            with context:
+                logits = model(
                     input_ids=batch["input_ids"],
                     attention_mask=batch["attention_mask"],
-                )
-                shift_logits = output.logits[:, :-1, :].contiguous()
-                shift_labels = batch["labels"][:, 1:].contiguous()
-                batch_nll = F.cross_entropy(
-                    shift_logits.view(-1, shift_logits.size(-1)),
-                    shift_labels.view(-1),
+                ).logits[:, :-1, :]
+                labels = batch["labels"][:, 1:]
+                token_nll = F.cross_entropy(
+                    logits.reshape(-1, logits.size(-1)),
+                    labels.reshape(-1),
                     ignore_index=-100,
-                    reduction="sum",
-                )
-                # DDP averages gradients across ranks, so multiply by world size
-                # to recover the exact global supervised-token mean objective.
-                loss = batch_nll * world_size / global_supervised_tokens
-                loss.backward()
+                    reduction="none",
+                ).view_as(labels)
+                batch_nll = (
+                    token_nll * sample_weights[:, None]
+                ).sum()
+                (batch_nll * world_size / global_weighted_tokens).backward()
                 local_nll += batch_nll.detach()
 
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            model.parameters(),
-            args.max_grad_norm,
-        )
+        grad_norm = torch.nn.utils.clip_grad_norm_(trainable, args.max_grad_norm)
         optimizer.step()
         scheduler.step()
         optimizer.zero_grad(set_to_none=True)
-
         global_nll = local_nll.clone()
         dist.all_reduce(global_nll, op=dist.ReduceOp.SUM)
-        step_tokens = int(global_supervised_tokens.item())
-        step_loss = float(global_nll.item() / step_tokens)
+
+        step_weighted_tokens = float(global_weighted_tokens.item())
+        step_loss = float(global_nll.item() / step_weighted_tokens)
         loss_ema = step_loss if loss_ema is None else 0.95 * loss_ema + 0.05 * step_loss
-        tokens_seen += step_tokens
+        tokens_seen += int(step_weighted_tokens)
         interval_nll += float(global_nll.item())
-        interval_tokens += step_tokens
+        interval_tokens += step_weighted_tokens
         interval_grad_norm += float(grad_norm)
-        interval_clipped_steps += int(float(grad_norm) > args.max_grad_norm)
+        interval_clipped += int(float(grad_norm) > args.max_grad_norm)
         interval_steps += 1
+
         if rank == 0 and (step == 1 or step % args.log_every == 0):
             elapsed = time.time() - started
             record = {
@@ -334,10 +293,9 @@ def main() -> None:
                 "loss_ema": loss_ema,
                 "grad_norm": float(grad_norm),
                 "mean_grad_norm": interval_grad_norm / interval_steps,
-                "clipped_step_rate": interval_clipped_steps / interval_steps,
+                "clipped_step_rate": interval_clipped / interval_steps,
                 "lr": scheduler.get_last_lr()[0],
                 "supervised_tokens": tokens_seen,
-                "elapsed_seconds": elapsed,
                 "supervised_tokens_per_second": tokens_seen / elapsed,
                 "max_memory_gib": torch.cuda.max_memory_allocated() / 2**30,
             }
@@ -351,31 +309,22 @@ def main() -> None:
             interval_nll = 0.0
             interval_tokens = 0
             interval_grad_norm = 0.0
-            interval_clipped_steps = 0
+            interval_clipped = 0
             interval_steps = 0
 
-        should_save = args.save_every > 0 and step % args.save_every == 0
-        if should_save:
+        if args.save_every > 0 and step % args.save_every == 0:
             dist.barrier()
             if rank == 0:
-                checkpoint_dir = args.output_dir / "checkpoints" / f"step-{step}"
-                model.module.save_pretrained(
-                    checkpoint_dir,
-                    safe_serialization=True,
-                    max_shard_size="5GB",
-                )
-                tokenizer.save_pretrained(checkpoint_dir)
+                checkpoint = args.output_dir / "checkpoints" / f"step-{step}"
+                model.module.save_pretrained(checkpoint, safe_serialization=True)
+                tokenizer.save_pretrained(checkpoint)
             dist.barrier()
 
     dist.barrier()
     if rank == 0:
-        hf_dir = args.output_dir / "hf"
-        model.module.save_pretrained(
-            hf_dir,
-            safe_serialization=True,
-            max_shard_size="5GB",
-        )
-        tokenizer.save_pretrained(hf_dir)
+        adapter_dir = args.output_dir / "adapter"
+        model.module.save_pretrained(adapter_dir, safe_serialization=True)
+        tokenizer.save_pretrained(adapter_dir)
         if swanlab_enabled:
             swanlab.finish()
     dist.barrier()
