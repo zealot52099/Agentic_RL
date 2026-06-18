@@ -1,27 +1,37 @@
 # 1. 数据收集与预处理
 
-本文档记录 Agentic RL 项目的数据来源、预处理目标、处理前后样例、实现脚本路径和当前远端数据状态。它服务于主计划 `agentic_rl_mastery_and_small_model_training_plan.md` 中的“数据体系”部分。
+本文档记录 Agentic RL 项目的数据来源、原始格式、预处理脚本、处理后格式、产物路径和质量门槛。它服务于主计划 `agentic_rl_mastery_and_small_model_training_plan.md` 中的“数据体系”部分。
 
-## 目标
+这篇文档不是只讲 SFT 数据。它覆盖四类资产：
 
-数据层必须支持四类能力：
+- 训练数据：SFT、preference、RLVR。
+- 验证数据：固定 validation split、内部 OOD split。
+- 评测数据：IFEval、BFCL、SWE-bench、GSM8K、MMLU-Pro、WikiSQL、LiveCodeBench 等。
+- 元数据：manifest、license、revision、schema fingerprint、污染检查报告。
+
+## 总体目标
+
+数据层必须支持以下能力：
 
 - 工具调用：server/tool 路由、JSON 参数生成、并行调用和无关工具拒绝。
 - MCP 多轮任务：跨 server 调用、观察结果续写、错误恢复和终止判断。
 - 安全边界：no-tool、clarification、权限不足、提示注入和高风险操作确认。
 - 通用能力保持：指令、推理、代码和数学回放，防止后训练导致能力回退。
+- 可复现评测：内部 probe、官方复跑和厂商公开数字必须分开标记。
 
-所有训练数据统一进入 Agent Trace 或 SFT/RL 导出格式，禁止直接把 benchmark test prompt、gold answer、SWE-bench patch 或官方评测轨迹混入训练集。
+硬性边界：
 
-## 数据来源
+- benchmark test prompt、gold answer、SWE-bench patch、hidden tests、官方评测轨迹不得进入训练数据。
+- 所有训练样本必须保留来源、处理脚本、处理时间、license/revision 或本地 hash。
+- 任何用于 OOD 评测的 server family、schema fingerprint 或 task family 不得泄漏到训练 split。
 
-| 类别 | 当前来源 | 用途 | 状态 |
-|---|---|---|---|
-| MCP smoke trace | `scripts/mcp_agent_pipeline.py build-smoke` | 格式、路由、no-tool、clarify、RLVR 验证 | 已生成 smoke 级数据 |
-| xLAM function calling | `datasets/processed/xlam-function-calling-60k` 或远端同名目录 | 单轮函数调用 SFT 和 probe | 已准备 |
-| SWE-Gym/OpenHands | `datasets/processed/swe-gym-openhands-sft` 或远端同名目录 | 代码 agent、终端轨迹 | 已准备小规模 |
-| 通用 SFT 回放 | `datasets/sources/tulu-*`、`datasets/sources/smol-*`、`datasets/sources/no-robots` | IFEval/GSM8K/MMLU/代码能力保持 | 已下载本地部分 |
-| 公开评测集 | `datasets/eval_suite` | 只评测，不训练 | 已准备多项 |
+## 目录约定
+
+本地项目根目录：
+
+```text
+D:\project\agentic_RL
+```
 
 远端主工作目录：
 
@@ -29,11 +39,36 @@
 /workspace/yans2@xiaopeng.com/agentic_rl_pipeline
 ```
 
+历史远端数据根目录：
+
+```text
+/workspace/yans2@xiaopeng.com/agentic_rl/datasets
+```
+
 当前 MCP SFT v3 数据目录：
 
 ```text
 /workspace/yans2@xiaopeng.com/agentic_rl_pipeline/datasets/processed/mcp_lora_sft_v3_20260618
 ```
+
+公开评测资产目录：
+
+```text
+datasets/eval_suite
+datasets/eval_suite/manifests/eval_suite_manifest.json
+```
+
+## 数据来源总览
+
+| 来源 | 原始位置 | 处理后位置 | 进入训练 | 主要脚本 |
+|---|---|---|---|---|
+| MCP smoke / MCP trace | 由 `scripts/mcp_agent_pipeline.py` 生成，或正式 `datasets/raw/mcp_traces.jsonl` | `datasets/processed/mcp_*` | 是，导出 SFT/preference/RLVR | `scripts/mcp_agent_pipeline.py`、`scripts/remote/prepare_mcp_sft_v2.py` |
+| xLAM function calling 60K | `datasets/sources/huggingface/xlam-function-calling-60k-parsed/*.parquet` | `datasets/processed/xlam-function-calling-60k/train.jsonl`、split 后 `train_sft.jsonl/eval.jsonl` | 是，主要用于单轮工具调用 SFT；heldout 可评测 | `scripts/prepare_remote_datasets.py`、`scripts/prepare_xlam_splits.py` |
+| SWE-Gym/OpenHands | `datasets/sources/huggingface/SWE-Gym-OpenHands-SFT-Trajectories/*.parquet` | `datasets/processed/swe-gym-openhands-sft/train.jsonl` | 是，小规模代码 agent/终端轨迹 SFT | `scripts/prepare_remote_datasets.py`、`scripts/remote/prepare_sft_v4_agent_mixture.py` |
+| 通用能力回放 | `datasets/sources/tulu-*`、`datasets/sources/smol-*`、`datasets/sources/no-robots` | SFT mixture 中的 broad/general rows | 是，用于防止能力回退 | `scripts/remote/prepare_sft_v3_mixture.py`、`scripts/remote/prepare_sft_v4_agent_mixture.py` |
+| 合成 hard constraints | 脚本实时生成 | `rl_verifiable_hard.jsonl` 或 SFT mixture | 是，用于格式/指令/RLVR | `scripts/remote/prepare_sft_v4_agent_mixture.py` |
+| tau2-bench / AgentBench / AgentTuning | `datasets/sources/tau2-bench`、`datasets/sources/AgentTuning` | manifest 记录；部分任务可转内部 eval | 默认评测/环境资产，不直接训练 | `scripts/prepare_remote_datasets.py` |
+| IFEval/BFCL/SWE-bench/LiveCodeBench/HumanEval/MBPP/GSM8K/MMLU-Pro | `datasets/eval_suite` | eval-only prompt/runner 输入 | 否，评测专用 | `scripts/prepare_eval_suite.py` |
 
 ## 核心实现脚本
 
@@ -45,16 +80,21 @@
 | `agentic_rl/pipeline.py` | smoke trace 合成、SFT/preference/RLVR 导出 |
 | `agentic_rl/sandbox.py` | 确定性 MCP 状态沙箱 |
 | `agentic_rl/reward.py` | 工具调用 reward 与 verifier |
-| `scripts/remote/prepare_mcp_sft_v1.py` | 旧版 MCP SFT 打包 |
-| `scripts/remote/prepare_mcp_sft_v2.py` | 修复 no-tool/clarify，固定验证集，过滤超长样本，增加 loss weight |
+| `scripts/prepare_remote_datasets.py` | 将远端 parquet/repo 资产转 JSONL 并写 manifest |
+| `scripts/prepare_xlam_splits.py` | xLAM 按 tool family 切分 train/heldout/eval，并渲染 SFT prompt |
+| `scripts/remote/prepare_mcp_sft_v2.py` | 修复 MCP SFT 标签，固定验证集，过滤超长样本，增加 `loss_weight` |
 | `scripts/remote/prepare_sft_v3_mixture.py` | 早期 instruction/RLVR 混合数据 |
-| `scripts/remote/prepare_sft_v4_agent_mixture.py` | SOTA-inspired agent 混合数据 |
-| `scripts/prepare_remote_datasets.py` | 远端基础数据准备 |
+| `scripts/remote/prepare_sft_v4_agent_mixture.py` | SOTA-inspired SFT/RLVR 混合数据 |
 | `scripts/prepare_eval_suite.py` | 下载并记录公开评测资产 |
 
-## 统一 Trace Schema
+## 统一中间格式
 
-正式数据必须包含以下字段或可追溯引用：
+不同来源不会天然长得一样。项目中有两个中间层：
+
+1. **Agent Trace**：适合 MCP、多轮工具、sandbox、RLVR 和 OOD split。
+2. **训练 row**：适合训练器直接读取，通常是 `prompt` + `completion` 或 `prompt` + `chosen/rejected`。
+
+正式 MCP Agent Trace 应包含：
 
 ```text
 trace_id
@@ -74,17 +114,27 @@ reward_components
 generation_metadata
 ```
 
-关键约束：
+关键字段：
 
-- `split_group_id` 使用语义家族，不使用展示名称。
-- `schema_fingerprint` 忽略工具名和自然语言描述，防止改名泄漏。
-- `server_family` 用于 OOD split。
-- `parser_version` 和 `chat_template_version` 必须记录，否则评测结果不可比。
-- tool result 必须通过 `call_id` 与 tool call 对齐。
+- `split_group_id`：语义任务家族，用于 train/OOD split。
+- `schema_fingerprint`：忽略工具名和描述后的 schema 指纹，防止改名泄漏。
+- `server_family`：用于保留真正 OOD server family。
+- `parser_version`：工具调用 parser 版本。
+- `chat_template_version`：prompt/template 版本。
+- `verifier_results`：执行、最终状态、安全和恢复的判定证据。
 
-## 处理前样例：原始 MCP Trace
+## 来源一：MCP Smoke / MCP Trace
 
-以下是简化样例，展示 trace 进入打包脚本前的形态。
+### 用途
+
+MCP trace 是本项目最核心的数据源，能导出：
+
+- SFT：格式、路由、参数、no-tool、clarify。
+- Preference：正确工具 vs 相似错误工具，澄清 vs 猜参数。
+- RLVR：prompt + verifier/reward，用于 GRPO。
+- OOD eval：按 server family/schema fingerprint/task family 切分。
+
+### 原始样例：MCP Trace
 
 ```json
 {
@@ -125,9 +175,7 @@ generation_metadata
 }
 ```
 
-## 处理后样例：SFT Row
-
-`prepare_mcp_sft_v2.py` 输出训练器直接消费的 prompt/completion 行：
+### 处理后样例：MCP SFT Row
 
 ```json
 {
@@ -148,9 +196,9 @@ generation_metadata
 }
 ```
 
-## 处理后样例：Clarification Row
+### 处理后样例：Clarification Row
 
-旧版 clarify 与 no-tool 都输出 `[]`，会导致模型学不会追问。v2 已改为显式 JSON action。
+旧版 clarify 与 no-tool 都输出 `[]`，会导致模型学不会追问。v2 预处理将 clarify 改为显式 JSON action。
 
 ```json
 {
@@ -167,7 +215,7 @@ generation_metadata
 }
 ```
 
-## 处理后样例：No-Tool Row
+### 处理后样例：No-Tool Row
 
 ```json
 {
@@ -184,7 +232,7 @@ generation_metadata
 }
 ```
 
-## 处理后样例：Preference Row
+### 处理后样例：Preference Row
 
 ```json
 {
@@ -197,7 +245,7 @@ generation_metadata
 }
 ```
 
-## 处理后样例：RLVR Row
+### 处理后样例：RLVR Row
 
 ```json
 {
@@ -220,37 +268,7 @@ generation_metadata
 }
 ```
 
-## 当前已生成数据
-
-远端 smoke 数据已完成以下版本：
-
-| 数据目录 | 用途 | 说明 |
-|---|---|---|
-| `raw/` | 保留 20% OOD split | 用于污染检查和内部 OOD |
-| `sft_v2/` | 修复后的 OOD train split | 不含完整 no-tool 分布，不作为当前主训练数据 |
-| `raw_all/` | 20k 全量 trace | 用于训练覆盖 |
-| `sft_v2_all/` | 当前 LoRA SFT 输入 | 含 positive、clarify、no-tool |
-
-`sft_v2_all/manifest.json` 关键统计：
-
-```json
-{
-  "train_rows": 19494,
-  "validation_rows": 506,
-  "train_counts": {
-    "mcp_positive": 14744,
-    "mcp_clarify": 2375,
-    "mcp_no_tool": 2375
-  },
-  "validation_counts": {
-    "mcp_clarify": 125,
-    "mcp_no_tool": 125,
-    "mcp_positive": 256
-  }
-}
-```
-
-## 标准处理命令
+### 命令
 
 构建 smoke trace：
 
@@ -291,20 +309,551 @@ python scripts/mcp_agent_pipeline.py check-contamination \
   --eval datasets/processed/mcp_agent_v1/ood_eval_traces.jsonl
 ```
 
+### 当前产物
+
+| 数据目录 | 用途 | 说明 |
+|---|---|---|
+| `raw/` | 保留 20% OOD split | 用于污染检查和内部 OOD |
+| `sft_v2/` | 修复后的 OOD train split | 不含完整 no-tool 分布，不作为当前主训练数据 |
+| `raw_all/` | 20k 全量 trace | 用于训练覆盖 |
+| `sft_v2_all/` | 当前 LoRA SFT 输入 | 含 positive、clarify、no-tool |
+
+`sft_v2_all/manifest.json` 关键统计：
+
+```json
+{
+  "train_rows": 19494,
+  "validation_rows": 506,
+  "train_counts": {
+    "mcp_positive": 14744,
+    "mcp_clarify": 2375,
+    "mcp_no_tool": 2375
+  },
+  "validation_counts": {
+    "mcp_clarify": 125,
+    "mcp_no_tool": 125,
+    "mcp_positive": 256
+  }
+}
+```
+
+## 来源二：xLAM Function Calling 60K
+
+### 用途
+
+xLAM 用于学习单轮函数调用的基本能力：
+
+- 工具名选择。
+- 参数 JSON 生成。
+- 多工具/并行调用。
+- tool family heldout 评测。
+
+它不是 MCP 多轮环境数据，不包含真实 MCP server 状态变化和 tool observation。
+
+### 原始位置
+
+远端历史目录：
+
+```text
+/workspace/yans2@xiaopeng.com/agentic_rl/datasets/sources/huggingface/xlam-function-calling-60k-parsed/xlam-function-calling-60k.parquet
+```
+
+处理后基础 JSONL：
+
+```text
+/workspace/yans2@xiaopeng.com/agentic_rl/datasets/processed/xlam-function-calling-60k/train.jsonl
+```
+
+### 原始样例：xLAM parquet/json row
+
+```json
+{
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get weather by city.",
+        "parameters": {
+          "type": "object",
+          "required": ["city"],
+          "properties": {
+            "city": {"type": "string"}
+          }
+        }
+      }
+    }
+  ],
+  "messages": [
+    {"role": "user", "content": "What is the weather in Paris?"},
+    {
+      "role": "assistant",
+      "tool_calls": [
+        {
+          "function": {
+            "name": "get_weather",
+            "arguments": "{\"city\":\"Paris\"}"
+          }
+        }
+      ]
+    }
+  ],
+  "extra": {"id": "xlam_000001"}
+}
+```
+
+### 处理后样例：xLAM SFT Row
+
+`scripts/prepare_xlam_splits.py` 会将 tools 和 user message 渲染成统一 prompt，并将 assistant tool calls 规范化为 JSON array。
+
+```json
+{
+  "id": "xlam_000001",
+  "family": "get_weather",
+  "prompt_template_version": "xlam_tool_json_v1",
+  "prompt": "You are a tool-calling assistant. Select only tools from the provided definitions. Return only a JSON array...\n\nTOOLS:\n[{...}]\n\nUSER:\nWhat is the weather in Paris?\n\nASSISTANT:\n",
+  "completion": "[{\"arguments\":{\"city\":\"Paris\"},\"name\":\"get_weather\"}]",
+  "expected_calls": [
+    {"name": "get_weather", "arguments": {"city": "Paris"}}
+  ],
+  "tools": [...]
+}
+```
+
+### 命令
+
+将 parquet 转 JSONL 并写 manifest：
+
+```bash
+python scripts/prepare_remote_datasets.py
+```
+
+按 tool family 切分 train/heldout/eval：
+
+```bash
+python scripts/prepare_xlam_splits.py \
+  --input datasets/processed/xlam-function-calling-60k/train.jsonl \
+  --output-dir datasets/processed/xlam-function-calling-60k/splits \
+  --holdout-modulus 10 \
+  --holdout-bucket 0 \
+  --eval-limit 512
+```
+
+### 质量要求
+
+- `tools` 必须是 JSON list。
+- assistant `tool_calls[].function.arguments` 如果是 string，必须能 parse 为 JSON object。
+- heldout 单位是排序后的 expected tool-name set，即 `family`。
+- heldout family 不进入 train。
+- xLAM eval 是内部工具调用 probe，不等同 BFCL 官方分数。
+
+## 来源三：SWE-Gym / OpenHands SFT Trajectories
+
+### 用途
+
+SWE-Gym/OpenHands 用于学习代码 agent 和终端轨迹：
+
+- 读取问题。
+- 操作文件。
+- 执行命令。
+- 根据测试反馈修复。
+- 形成多轮 assistant 行为。
+
+它可以用于 SFT，但不能把 SWE-bench Verified/Lite 的 gold patch 或 test patch 混入训练。
+
+### 原始位置
+
+```text
+/workspace/yans2@xiaopeng.com/agentic_rl/datasets/sources/huggingface/SWE-Gym-OpenHands-SFT-Trajectories/swe-gym-openhands-sft.parquet
+```
+
+处理后基础 JSONL：
+
+```text
+/workspace/yans2@xiaopeng.com/agentic_rl/datasets/processed/swe-gym-openhands-sft/train.jsonl
+```
+
+### 原始样例：trajectory row
+
+```json
+{
+  "messages": [
+    {"role": "user", "content": "Fix the failing test in repository X."},
+    {"role": "assistant", "content": "We need inspect the failure first."},
+    {"role": "tool", "content": "pytest output ..."},
+    {"role": "assistant", "content": "The bug is in parser.py. I will patch ..."}
+  ],
+  "repo": "example/repo",
+  "instance_id": "swe_gym_000001"
+}
+```
+
+### 处理后样例：assistant-only SFT Row
+
+`prepare_sft_v4_agent_mixture.py` 中的 `swe_rows()` 会把每个 assistant turn 拆成独立训练样本，prompt 是之前的上下文，completion 是当前 assistant 内容。
+
+```json
+{
+  "id": "swe-trajectory-0-turn-3",
+  "source": "swe_gym_openhands",
+  "mixture_source": "swe_trajectory",
+  "prompt": "USER:\nFix the failing test in repository X.\n\nASSISTANT:\nWe need inspect the failure first.\n\nTOOL:\npytest output ...\n\nASSISTANT:\n",
+  "completion": "The bug is in parser.py. I will patch ... "
+}
+```
+
+### 命令
+
+```bash
+python scripts/prepare_remote_datasets.py
+```
+
+作为 v4 mixture 的输入：
+
+```bash
+python scripts/remote/prepare_sft_v4_agent_mixture.py \
+  --v3-data datasets/processed/sft_v3/train_sft.jsonl \
+  --tool-data datasets/processed/xlam-function-calling-60k/splits/train_sft.jsonl \
+  --swe-data datasets/processed/swe-gym-openhands-sft/train.jsonl \
+  --output-dir datasets/processed/sft_v4_agent_mixture \
+  --total-rows 96000 \
+  --seed 20260640
+```
+
+### 质量要求
+
+- 只取 assistant turn 作为 completion。
+- completion 过长的样本过滤或截断。
+- prompt 最长上下文需要截断到训练 seq_len 可承受范围。
+- 训练数据不能包含 SWE-bench test patch、hidden tests 或官方答案。
+
+## 来源四：通用能力回放数据
+
+### 用途
+
+通用能力回放用于防止后训练过拟合工具调用，导致：
+
+- IFEval 下降。
+- GSM8K/MMLU-Pro 下降。
+- 普通对话变差。
+- 代码/数学能力回退。
+
+建议在 SFT/DPO/RL 阶段保留 10%-15% 通用回放。
+
+### 当前来源
+
+```text
+datasets/sources/tulu-3-sft-mixture
+datasets/sources/tulu-personas-if
+datasets/sources/smol-smoltalk
+datasets/sources/no-robots
+```
+
+### 原始样例：messages parquet row
+
+```json
+{
+  "messages": [
+    {"role": "user", "content": "Explain gradient clipping in simple terms."},
+    {"role": "assistant", "content": "Gradient clipping limits the size of an update..."}
+  ],
+  "source": "tulu"
+}
+```
+
+### 处理后样例：general replay SFT Row
+
+```json
+{
+  "id": "general_replay_000001",
+  "mixture_source": "broad_instruction",
+  "prompt": "USER:\nExplain gradient clipping in simple terms.\n\nASSISTANT:\n",
+  "completion": "Gradient clipping limits the size of an update...",
+  "loss_weight": 0.5
+}
+```
+
+### 处理脚本
+
+```text
+scripts/remote/prepare_sft_v3_mixture.py
+scripts/remote/prepare_sft_v4_agent_mixture.py
+```
+
+### 质量要求
+
+- 不使用 IFEval/GSM8K/MMLU-Pro test prompt 本身作为训练回放。
+- 保留数据来源字段，例如 `tulu_if`、`no_robots`、`broad_instruction`。
+- 回放比例不能过高，否则会稀释工具调用能力。
+- 回放比例不能为 0，否则容易出现通用能力回退。
+
+## 来源五：合成 No-Tool、Hard Constraints 与 RLVR 数据
+
+### 用途
+
+合成数据用于补足公开数据缺少的行为边界：
+
+- no-tool：工具无关时输出空调用。
+- hard constraints：严格格式、关键词、行数、JSON key 等。
+- RLVR：可验证奖励，减少纯文本偏好判断。
+
+### 原始样例：由脚本构造的 no-tool prompt
+
+```json
+{
+  "prompt": "TOOLS:\n[{...calendar tools...}]\n\nUSER:\nExplain why backups should be tested regularly.\n\nNo provided tool is relevant. Return only an empty JSON array.\n\nASSISTANT:\n",
+  "completion": "[]"
+}
+```
+
+### 原始样例：hard constraint prompt
+
+```json
+{
+  "prompt": "Return only a JSON object about incident response. It must have exactly the keys plan, risks, and checks. Each value must be an array of exactly two strings. Include the exact phrase 'verify first' in exactly one string and never use the word 'easy'.\n\nASSISTANT:\n",
+  "completion": "{\"plan\":[\"Define scope for incident response\",\"verify first\"],\"risks\":[\"Unexpected behavior\",\"Incomplete rollback\"],\"checks\":[\"Run deterministic tests\",\"Review recorded evidence\"]}",
+  "verifier": {
+    "kind": "nested_json_constraints",
+    "keys": ["plan", "risks", "checks"],
+    "array_length": 2,
+    "required_phrase": "verify first",
+    "forbidden": "easy"
+  }
+}
+```
+
+### 处理后产物
+
+`prepare_sft_v4_agent_mixture.py` 会输出：
+
+```text
+train_sft.jsonl
+rl_verifiable_hard.jsonl
+manifest.json
+```
+
+其中：
+
+- `train_sft.jsonl` 用于 SFT。
+- `rl_verifiable_hard.jsonl` 用于 RLVR/GRPO。
+- `manifest.json` 记录配比、seed 和设计说明。
+
+## 来源六：tau2-bench、AgentBench、AgentTuning
+
+### 用途
+
+这些资产主要用于环境任务、agent prompt 和评测，不默认直接进入训练。
+
+位置示例：
+
+```text
+datasets/sources/tau2-bench
+datasets/sources/AgentTuning
+```
+
+manifest 会记录：
+
+```json
+{
+  "name": "tau2-bench",
+  "kind": "environment_tasks_and_evaluation",
+  "source": "https://github.com/sierra-research/tau2-bench",
+  "source_revision": "<git_commit>",
+  "task_files": [
+    {"path": ".../tasks.json", "records": 100}
+  ]
+}
+```
+
+如果未来转训练数据，必须先：
+
+- 去除官方测试集。
+- 去除 gold trajectories。
+- 按 domain/environment family 做 OOD split。
+- 记录 user simulator、tool environment 和 evaluator revision。
+
+## 来源七：公开评测集
+
+### 用途
+
+公开评测集只用于评测，不进入训练。
+
+当前资产由 `scripts/prepare_eval_suite.py` 下载并记录 manifest。
+
+| Benchmark | 路径 | 用途 | 训练 |
+|---|---|---|---|
+| IFEval | `datasets/eval_suite/huggingface/google__IFEval` | 指令遵循 | 否 |
+| BFCL | `datasets/eval_suite/huggingface/gorilla-llm__Berkeley-Function-Calling-Leaderboard` | 函数调用 | 否 |
+| SWE-bench Lite/Verified | `datasets/eval_suite/huggingface/SWE-bench__*` | 软件工程 | 否 |
+| LiveCodeBench Lite | `datasets/eval_suite/huggingface/livecodebench__code_generation_lite` | 代码生成 | 否 |
+| HumanEval | `datasets/eval_suite/huggingface/openai__openai_humaneval` | 代码生成 | 否 |
+| MBPP | `datasets/eval_suite/huggingface/google-research-datasets__mbpp` | 代码生成 | 否 |
+| GSM8K | `datasets/eval_suite/huggingface/openai__gsm8k` | 数学推理 | 否 |
+| MMLU-Pro | `datasets/eval_suite/huggingface/TIGER-Lab__MMLU-Pro` | 知识推理 | 否 |
+
+### IFEval 样例
+
+```json
+{
+  "key": 1000,
+  "prompt": "Write a 300+ word summary ... Include the keyword exactly twice.",
+  "instruction_id_list": ["keywords:existence", "length_constraints:number_words"],
+  "kwargs": [...]
+}
+```
+
+### BFCL 样例
+
+```json
+{
+  "id": "BFCL_v3_simple_0001",
+  "question": [[{"role": "user", "content": "Book a flight from SFO to JFK."}]],
+  "function": [
+    {
+      "name": "book_flight",
+      "parameters": {
+        "type": "object",
+        "required": ["from", "to"],
+        "properties": {
+          "from": {"type": "string"},
+          "to": {"type": "string"}
+        }
+      }
+    }
+  ]
+}
+```
+
+### SWE-bench 样例
+
+```json
+{
+  "instance_id": "django__django-xxxxx",
+  "repo": "django/django",
+  "base_commit": "...",
+  "problem_statement": "...",
+  "test_patch": "...",
+  "FAIL_TO_PASS": [...],
+  "PASS_TO_PASS": [...]
+}
+```
+
+注意：`test_patch` 是评测判题资产，不是训练答案。
+
+### 评测资产准备命令
+
+```powershell
+python scripts/prepare_eval_suite.py --download
+```
+
+### 质量要求
+
+- eval manifest 必须保存 exact revision、commit、hash。
+- 训练脚本不得读取 `datasets/eval_suite` 下的 test 文件。
+- 内部 probe、官方复跑和厂商报告数字必须分别标记。
+- SWE-bench 结果必须记录 agent scaffold、工具、token budget、retry、Docker image revision。
+
+## 当前数据状态
+
+### MCP LoRA SFT v3
+
+```text
+Root:
+/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/datasets/processed/mcp_lora_sft_v3_20260618
+
+Train:
+sft_v2_all/train_sft.jsonl
+
+Validation:
+sft_v2_all/validation_sft.jsonl
+
+Preference:
+raw_all/train_preferences.jsonl
+
+RLVR:
+raw_all/train_rlvr.jsonl
+```
+
+统计：
+
+```json
+{
+  "train_rows": 19494,
+  "validation_rows": 506,
+  "train_counts": {
+    "mcp_positive": 14744,
+    "mcp_clarify": 2375,
+    "mcp_no_tool": 2375
+  },
+  "validation_counts": {
+    "mcp_clarify": 125,
+    "mcp_no_tool": 125,
+    "mcp_positive": 256
+  }
+}
+```
+
+### Evaluation suite
+
+```text
+datasets/eval_suite/manifests/eval_suite_manifest.json
+```
+
+已包含：
+
+- IFEval。
+- BFCL 数据和 evaluator staging。
+- SWE-bench Lite/Verified metadata。
+- LiveCodeBench Lite。
+- HumanEval。
+- MBPP。
+- GSM8K。
+- MMLU-Pro。
+
+## Manifest 要求
+
+每个 processed 数据目录都必须有 `manifest.json` 或纳入全局 manifest，至少包含：
+
+```json
+{
+  "format_version": 1,
+  "source": "source path or URL",
+  "source_revision": "commit or dataset revision",
+  "license": "license name",
+  "processing_script": "scripts/...",
+  "processing_command": "...",
+  "seed": 20260618,
+  "counts": {
+    "train": 10000,
+    "validation": 500,
+    "eval": 500
+  },
+  "splits": {
+    "unit": "server_family | schema_fingerprint | tool_family | task_family",
+    "contamination_clean": true
+  },
+  "hashes": {
+    "train_sft.jsonl": "sha256..."
+  }
+}
+```
+
 ## 质量门槛
 
 - JSON/schema valid rate 不低于 99.5%。
-- 同一 `schema_fingerprint` 或 `split_group_id` 不得跨训练与 OOD 测试泄漏。
-- clarify 不能再用 `[]`，必须输出显式追问动作。
+- 同一 `schema_fingerprint`、`split_group_id`、tool family 或 task family 不得跨训练与 OOD 测试泄漏。
+- clarify 不能输出 `[]`，必须输出显式追问动作。
 - no-tool 样本比例不少于 8%，否则模型容易过度调用工具。
 - 样本必须记录来源、license、处理脚本、token 长度和 verifier。
 - 公开 benchmark test 数据只可进入 `datasets/eval_suite`，不得进入训练输入。
+- 合成数据不能只看格式成功，必须增加执行或 hidden assertion 验证。
 
 ## 后续补强
 
-当前数据是 smoke 级闭环，不是生产规模数据。下一步需要：
+当前 MCP 数据是 smoke 级闭环，不是生产规模数据。下一步需要：
 
 - 扩展到至少 60 个 MCP Server、500 个工具、8 万条多轮轨迹。
 - 使用教师模型生成多路径轨迹，并通过 schema、执行和最终状态三层校验。
 - 加入真实 MCP Server 回放，减少模板化数据的模拟器偏差。
 - 用当前学生模型挖掘失败样本，形成 hard negative、preference 和 RLVR 数据。
+- 为每个来源补齐真实样本 hash、license 审核记录和 contamination report。
