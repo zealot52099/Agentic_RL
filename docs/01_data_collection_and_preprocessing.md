@@ -123,6 +123,239 @@ generation_metadata
 - `chat_template_version`：prompt/template 版本。
 - `verifier_results`：执行、最终状态、安全和恢复的判定证据。
 
+## 阶段级标准 Schema
+
+原始数据允许不同，但进入同一个训练或评测阶段后，消费格式必须一致。这里的“一致”指 required fields 和 action 表达一致；不同来源可以保留 optional metadata，供分桶统计、调试、评测和溯源使用。
+
+### SFT Schema
+
+SFT 训练器消费 `prompt` + `completion`。所有来源进入 SFT 前都必须转成这个形态。
+
+Required fields：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | string/int | 样本唯一 ID，建议稳定可复现 |
+| `prompt` | string | 完整输入，包含 system/tool schema/user/history，结尾通常是 `ASSISTANT:` |
+| `completion` | string | 只监督 assistant 输出，不包含 prompt |
+| `mixture_source` | string | 来源分桶，例如 `mcp_positive`、`mcp_no_tool`、`xlam_tool_call`、`swe_trajectory`、`broad_instruction` |
+
+Optional fields：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `loss_weight` | number | 样本或来源权重，用于补偿 no-tool 等短 completion |
+| `verifier` | object | 可选 verifier，便于训练后回放或抽样检查 |
+| `prompt_tokens` | int | 预处理时统计的 prompt token 数 |
+| `completion_tokens` | int | 预处理时统计的 completion token 数 |
+| `source` | string | 上游数据集或生成器 |
+| `source_revision` | string | HF revision、git commit 或数据 hash |
+| `license` | string | 数据许可 |
+| `schema_fingerprint` | string | 工具 schema 指纹，主要用于 MCP/tool 数据 |
+| `split_group_id` | string | 任务家族，主要用于 OOD split |
+| `expected_calls` | array | 工具调用 gold，用于分析，不一定被 SFT trainer 使用 |
+
+标准 SFT row：
+
+```json
+{
+  "id": "sft_000001",
+  "prompt": "SYSTEM: ...\nUSER:\nSchedule project review for Friday.\n\nASSISTANT:\n",
+  "completion": "[{\"name\":\"calendar.create_event\",\"arguments\":{\"title\":\"project review\",\"date\":\"Friday\"}}]",
+  "mixture_source": "mcp_positive",
+  "loss_weight": 1.0,
+  "verifier": {
+    "kind": "mcp_tool_call",
+    "expected_calls": [
+      {"name": "calendar.create_event", "arguments": {"title": "project review", "date": "Friday"}}
+    ]
+  }
+}
+```
+
+约束：
+
+- `completion` 必须是模型应该生成的 assistant 内容，不能包含 user/system 文本。
+- 工具调用类 completion 必须使用统一 action 表达，例如 JSON array 或显式 `clarify` JSON。
+- no-tool 统一用 `[]`，clarify 不能用 `[]`。
+- 如果样本来自通用回放，`verifier` 可以为空，但必须有 `mixture_source`。
+- 训练前必须过滤超过目标 `seq_len` 的样本，或明确采用 packing/truncation 规则。
+
+### Preference / DPO Schema
+
+Preference 数据用于 DPO、SimPO 或其他偏好优化。核心是一条 prompt 配一个 chosen 和 rejected。
+
+Required fields：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | string/int | 偏好样本唯一 ID |
+| `prompt` | string | 与 SFT 同风格的输入 |
+| `chosen` | string | 更优输出 |
+| `rejected` | string | 较差输出 |
+| `preference_type` | string | 偏好类型，例如 `correct_tool_vs_similar_wrong_tool` |
+
+Optional fields：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `verifier` | object | 说明 chosen 为什么正确、rejected 为什么错误 |
+| `reward_chosen` | number | chosen 的 verifier/reward 分数 |
+| `reward_rejected` | number | rejected 的 verifier/reward 分数 |
+| `error_type` | string | rejected 的主要错误类型 |
+| `mixture_source` | string | 来源分桶 |
+| `source_trace_id` | string | 关联的原始 trace |
+
+标准 preference row：
+
+```json
+{
+  "id": "pref_000001",
+  "prompt": "SYSTEM: ...\nUSER:\nSchedule project review for Friday.\n\nASSISTANT:\n",
+  "chosen": "[{\"name\":\"calendar.create_event\",\"arguments\":{\"title\":\"project review\",\"date\":\"Friday\"}}]",
+  "rejected": "[{\"name\":\"email.send\",\"arguments\":{\"subject\":\"project review\"}}]",
+  "preference_type": "correct_tool_vs_similar_wrong_tool",
+  "verifier": {
+    "kind": "mcp_tool_call",
+    "expected_calls": [
+      {"name": "calendar.create_event", "arguments": {"title": "project review", "date": "Friday"}}
+    ]
+  }
+}
+```
+
+推荐偏好类型：
+
+- `correct_tool_vs_similar_wrong_tool`
+- `correct_arguments_vs_wrong_arguments`
+- `clarify_vs_guess_missing_arguments`
+- `no_tool_vs_unnecessary_tool_call`
+- `safe_refusal_vs_unauthorized_call`
+- `recovery_vs_repeated_failure`
+
+约束：
+
+- chosen/rejected 必须共享同一个 prompt。
+- rejected 最好是“近邻错误”，不是明显无关的垃圾输出。
+- 偏好对必须按类型分桶汇报，否则容易被大量简单样本掩盖安全或澄清退化。
+
+### RLVR / GRPO Schema
+
+RLVR 数据用于在线采样和 verifier 打分。核心是 prompt + verifier，而不是固定 completion。
+
+Required fields：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | string/int | RL 样本唯一 ID |
+| `prompt` | string | rollout 起点 |
+| `verifier` | object | 可执行或可规则验证的判分器 |
+
+Optional fields：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `reward_components` | object | route、arguments、execution、task、safety 等分量权重 |
+| `reference_completion` | string | 可选参考答案，仅用于调试，不作为 RL 监督 |
+| `environment_state` | object/string | 初始环境状态或快照引用 |
+| `permissions` | object | 当前授权状态 |
+| `max_turns` | int | 最大工具调用轮数 |
+| `source_trace_id` | string | 关联 trace |
+| `mixture_source` | string | 来源分桶 |
+
+标准 RLVR row：
+
+```json
+{
+  "id": "rlvr_000001",
+  "prompt": "SYSTEM: ...\nUSER:\nSchedule project review for Friday.\n\nASSISTANT:\n",
+  "verifier": {
+    "kind": "mcp_tool_call",
+    "expected_calls": [
+      {"name": "calendar.create_event", "arguments": {"title": "project review", "date": "Friday"}}
+    ],
+    "reward_components": {
+      "route": 0.10,
+      "arguments": 0.15,
+      "execution": 0.20,
+      "task": 0.35,
+      "recovery": 0.10,
+      "safety": 0.10
+    }
+  }
+}
+```
+
+约束：
+
+- verifier 必须能自动打分，不能依赖教师模型自评。
+- 格式正确只能作为 gate，不能让模型靠格式刷高分。
+- 最终任务状态或 hidden assertion 应是主奖励来源。
+- RLVR 数据不应在 SFT 中直接使用 `reference_completion` 训练，除非明确导出为 SFT row。
+
+### Eval Schema
+
+Eval 数据用于统一评测和回归。它可以长得接近 RLVR，但必须额外标明结果标签和 benchmark 信息。
+
+Required fields：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | string/int | 评测样本 ID |
+| `prompt` | string | 模型输入 |
+| `benchmark` | string | 例如 `internal_mcp_ood`、`xlam_probe`、`ifeval`、`bfcl` |
+| `label_type` | string | `INTERNAL-PROBE`、`OUR-RERUN`、`OFFICIAL-RERUN`、`VENDOR-REPORTED` |
+| `expected` 或 `verifier` | object/string | gold answer、expected call 或 verifier |
+
+Optional fields：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `category` | string | 评测子类，例如 parallel、irrelevance、no-tool |
+| `source_revision` | string | 数据集 revision |
+| `evaluator_revision` | string | runner/evaluator revision |
+| `parser_version` | string | 输出解析器版本 |
+| `chat_template_version` | string | prompt 模板版本 |
+| `max_tokens` | int | 生成长度 |
+| `temperature` | number | 解码温度 |
+| `scaffold` | object/string | SWE-bench/tau2 等 agent scaffold 配置 |
+
+标准内部 eval row：
+
+```json
+{
+  "id": "eval_mcp_ood_000001",
+  "benchmark": "internal_mcp_ood",
+  "label_type": "INTERNAL-PROBE",
+  "prompt": "SYSTEM: ...\nUSER:\nFind unread high-priority emails and create a follow-up task.\n\nASSISTANT:\n",
+  "verifier": {
+    "kind": "mcp_tool_call",
+    "expected_calls": [
+      {"name": "email.search", "arguments": {"unread": true, "priority": "high"}},
+      {"name": "tasks.create", "arguments": {"source": "email.search"}}
+    ]
+  },
+  "category": "multi_server"
+}
+```
+
+约束：
+
+- Eval 数据默认不能进入训练。
+- 内部 eval 与官方 benchmark 必须分开路径、分开指标、分开标签。
+- 生成式评测必须记录 decoding、parser、template 和 evaluator revision。
+
+### 阶段格式与来源映射
+
+| 来源 | SFT | Preference/DPO | RLVR/GRPO | Eval |
+|---|---|---|---|---|
+| MCP trace | `prompt/completion/verifier` | `prompt/chosen/rejected/verifier` | `prompt/verifier` | `prompt/verifier` |
+| xLAM | `prompt/completion/expected_calls` | 可由错误样本构造 | 不推荐直接 RL，除非有 verifier | heldout `prompt/expected_calls` |
+| SWE-Gym/OpenHands | assistant turn SFT | 可由成功/失败轨迹构造 | 需要执行环境后再用 | 代码 agent probe |
+| 通用回放 | `prompt/completion` | 少量偏好对可用 | 通常不用 | IFEval/GSM8K/MMLU 回归 |
+| hard constraints | `prompt/completion/verifier` | 可构造 chosen/rejected | `prompt/verifier` | 格式/指令 probe |
+| 公开 benchmark | 禁止进入训练 | 禁止进入训练 | 禁止进入训练 | 官方或内部复跑 |
+
 ## 来源一：MCP Smoke / MCP Trace
 
 ### 用途
