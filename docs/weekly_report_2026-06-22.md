@@ -144,7 +144,34 @@ COMPLETION:
 
 ---
 
-## 四、实验矩阵
+## 四、模型选型
+
+### 为什么选 Coder7B
+
+Qwen2.5-Coder-7B-Instruct 专为代码和结构化输出场景设计，预训练中大量接触 JSON Schema、函数签名、SQL 语法，与工具调用任务高度匹配。
+
+**关键证据**：基座 SQL Func 仅 3%，但不是因为缺少知识——模型能明确选对 `sql.execute`，填对表名和列名——只是输出格式是 markdown 包装的 `{"function_name":"..."}` 而非裸 JSON。格式纠正后飙升至 99%，证明知识完整。
+
+### Bifrost 可用候选模型
+
+| 模型 | 参数量 | 类型 | 适合度 | 说明 |
+|---|---|---|---|---|
+| **Qwen2.5-Coder-7B-Instruct** ✅ | 7B | 代码专用 | ⭐⭐⭐ | 当前采用，JSON/SQL 原生能力最强，15GB 单卡可跑 |
+| Qwen2.5-Coder-14B-Instruct | 14B | 代码专用 | ⭐⭐⭐ | 更强能力，~28GB 需 QLoRA 或模型并行 |
+| Qwen2.5-3B-Instruct | 3B | 通用 | ⭐⭐ | 1.5B↔7B 甜点位 |
+| Qwen2.5-7B-Instruct | 7B | 通用 | ⭐⭐ | 已用 1.5B 版本跑通流程 |
+| Qwen3-8B | 8B | 新一代 Dense | ⭐⭐ | 架构更新，需 SFT |
+| Qwen2.5-14B-Instruct | 14B | 通用 | ⭐⭐ | 更强但显存挑战大 |
+
+### 选型路线
+
+- **已验证**：1.5B Instruct + Coder7B
+- **中期冲榜**：Coder14B + QLoRA + 混合格式 SFT，预估 BFCL 85-90%
+- **远期**：Qwen3-Coder 系列发布后跟进
+
+---
+
+## 五、实验矩阵
 
 | 模型 | 参数量 | 训练路线 | BFCL Live | live_parallel | live_parallel_multiple | SQL Func | SQL Exact | Multi-Turn | Web Search |
 |---|---|---|---|---|---|---|---|---|---|
@@ -162,7 +189,7 @@ COMPLETION:
 > N/A = 模型输出 MCP 格式（`server_id` + `tool_name`），SQL/Multi-Turn 评测使用标准格式 parser，无法直接比对  
 > ~0% = 基座无训练，输出 markdown 包装 + 非标准 key name，parse 基本失败
 
-## 五、关键结论
+## 六、关键结论
 
 **1. 1.5B 小模型跑通 SFT→DPO→GRPO 全流程（+21pp）**
 
@@ -186,7 +213,7 @@ COMPLETION:
 
 ---
 
-## 六、RL 方法选型
+## 七、RL 方法选型
 
 | 方法 | 适用场景 | 本项目 | 原因 |
 |---|---|---|---|
@@ -197,7 +224,7 @@ COMPLETION:
 
 ---
 
-## 七、脚本说明
+## 八、脚本说明
 
 ### 训练脚本
 
@@ -228,7 +255,7 @@ COMPLETION:
 
 ---
 
-## 八、下一步
+## 九、下一步
 
 | 方向 | 预估提升 | 说明 |
 |---|---|---|
