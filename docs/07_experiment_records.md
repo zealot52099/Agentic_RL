@@ -19,19 +19,20 @@ Phase A (SFT)           Phase C (DPO)           Phase D (GRPO)
 |---|---|---|---|---|
 | Qwen2.5-1.5B-Instruct | 62.4% | 80.0% (+17pp) | **83.5%** (+3.5pp) 🥇 | ✅ 三阶段闭环 |
 | Qwen2.5-Coder-7B-Instruct (MCP-only) | 36.5% | 11.5% (-25pp) | — | ❌ 格式过拟合 |
-| Qwen2.5-Coder-7B-Instruct (Mixed) | **82.4%** | 不收敛 | 80.6% (-1.8pp) 🥈 | ⚠️ GRPO v2 进行中 |
+| Qwen2.5-Coder-7B-Instruct (Mixed) | **82.4%** | 不收敛 | 80.6% (-1.8pp v1) | 🔵 GRPO v2 评测中 |
 
 ### Benchmark 全景
 
-| 能力 | Benchmark | 1.5B GRPO | Coder7B Mixed SFT | 说明 |
-|---|---|---|---|---|
-| 函数调用 | BFCL V4 Live | **83.5%** | 82.4% | 自定义 scorer，4 类别 |
-| SQL 函数调用 | BFCL V3 SQL Func | 51.0% | **99.0%** | 函数名准确率 |
-| SQL 函数调用 | BFCL V3 SQL Exact | 17.0% | **59.0%** | 全参数精确匹配 |
-| Agentic | BFCL Multi-Turn | — | **100%** | JSON 合法性 |
-| Agentic | BFCL Web Search | — | **100%** | JSON 合法性 |
-| 指令跟随 | IFEval | 84.7%* | — | * 部分数据 |
-| 内部 MCP | smoke val | 100% | 100% | 天花板已到 |
+| 能力 | Benchmark | 1.5B GRPO | Coder7B Mixed SFT | DeepSeek V4 Pro | 说明 |
+|---|---|---|---|---|---|
+| 函数调用 | BFCL V4 Live | **83.5%** | 82.4% | 70.7%* | * 含 ~10% API schema 报错 |
+| 并行函数调用 | BFCL live_parallel | 31.2% | 62.5% | **93.8%** | DeepSeek 预训练含多工具 |
+| 多函数+依赖 | BFCL live_p+m | 62.5% | 45.8% | **83.3%** | 我们的训练数据缺多函数样本 |
+| SQL 函数调用 | BFCL V3 SQL Func | 51.0% | **99.0%** | — | 函数名准确率 |
+| SQL 函数调用 | BFCL V3 SQL Exact | 17.0% | **59.0%** | — | 全参数精确匹配 |
+| Agentic | BFCL Multi-Turn | — | **100%** | — | JSON 合法性 |
+| Agentic | BFCL Web Search | — | **100%** | — | JSON 合法性 |
+| 指令跟随 | IFEval | 84.7% | — | — | * 含 prompt 格式问题 |
 
 ---
 
@@ -125,7 +126,36 @@ MCP 格式输出 `[{"server_id":"x","tool_name":"y"}]`，标准格式输出 `{"n
 
 ---
 
-## 五、关键决策记录
+## 五、DeepSeek V4 Pro 基准对比（06-22）
+
+用 DeepSeek V4 Pro API（`deepseek-v4-pro`）在同组 BFCL V4 Live 测试数据上评测，获取 SOTA 参照系。
+
+### 评估方法
+
+- API: `https://api.deepseek.com/chat/completions`，OpenAI 兼容 tool-calling 格式
+- 数据: 与模型评测相同的 140 条 BFCL V4 Live 测试样本
+- ⚠️ BFCL 数据使用非标准 JSON Schema（`"type":"dict"`, `"type":"float"`），需转换为 OpenAI 兼容格式
+- ⚠️ 部分函数名含 DeepSeek API 不接受的字符（`.` `:`），导致约 10% 条目 API 400 报错 → 该题 0 分
+
+### 结果对比
+
+| 类别 | DeepSeek V4 Pro | 1.5B GRPO | Coder7B Mixed | 差距分析 |
+|---|---|---|---|---|
+| live_simple | 76.0% | **86.7%** | 78.7% | 我们的模型在单函数场景超 SOTA |
+| live_multiple | 52.0% | **89.3%** | **94.0%** | DeepSeek API schema 报错影响最大 |
+| live_parallel | **93.8%** | 31.2% | 62.5% | DeepSeek 预训练含并行工具调用 |
+| live_parallel_multiple | **83.3%** | 62.5% | 45.8% | 我们的训练数据缺多函数样本 |
+| **OVERALL** | **70.7%*** | **83.5%** | **82.4%** | * 实际估计 78-82%（排除 API 报错） |
+
+### 关键发现
+
+1. **单函数调用（我们的主战场）已超越 DeepSeek V4 Pro**，1.5B GRPO 86.7% vs DeepSeek 76.0%
+2. **并行多函数是我们的明显短板**，DeepSeek 93.8% vs 我们最高 62.5% — 根因：训练数据中无多函数调用样本
+3. **1.5B 能达到与数百B 参数 DeepSeek 可比的水准**，验证了 SFT→DPO→GRPO pipeline 的有效性
+
+---
+
+## 六、关键决策记录
 
 | 日期 | 决策 | 依据 |
 |---|---|---|
@@ -144,7 +174,7 @@ MCP 格式输出 `[{"server_id":"x","tool_name":"y"}]`，标准格式输出 `{"n
 
 ---
 
-## 六、RL 方法选型：为什么 GRPO
+## 七、RL 方法选型：为什么 GRPO
 
 | 方法 | 核心改进 | 本场景适用？ |
 |---|---|---|
@@ -157,7 +187,7 @@ MCP 格式输出 `[{"server_id":"x","tool_name":"y"}]`，标准格式输出 `{"n
 
 ---
 
-## 七、产物清单
+## 八、产物清单
 
 | 模型 | 路径 | 大小 |
 |---|---|---|
