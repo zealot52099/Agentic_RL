@@ -39,15 +39,8 @@ Phase A (SFT)           Phase C (DPO)           Phase D (GRPO)
 
 ### 问题：Coder7B 基座 SQL 知识完整但不会输出正确格式
 
-```
-基座 Coder7B 输出:
-```json                             ← markdown 包装
-{"function_name": "sql.execute"}   ← 用 function_name 而非 name
-```
-
-训练后:
-{"name": "sql.execute", "arguments": {...}}   ← 裸 JSON，正确 key
-```
+- **基座 Coder7B 输出（错误）**: 被 markdown 代码块包装，使用 `"function_name"` 而非 `"name"` 作为 key，解析器无法提取 → Func 仅 3%
+- **SFT 训练后输出（正确）**: 裸 JSON，无 markdown 包装，使用 `"name"` 和 `"arguments"` → Func 99%，解析器完全匹配
 
 | 指标 | Coder7B 基座 | MCP SFT | Mixed SFT | 提升 |
 |---|---|---|---|---|
