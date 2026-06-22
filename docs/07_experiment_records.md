@@ -114,13 +114,43 @@ MCP 格式输出 `[{"server_id":"x","tool_name":"y"}]`，标准格式输出 `{"n
 
 **根因**：reward 函数只检查 args key 是否存在（`required_key in args`），不查值是否正确。GRPO 学会"填任意值就拿分" → SQL 参数值随机化 → eval 精确值匹配全挂。
 
-### Coder7B GRPO v2 修复（06-22，进行中）
+### Coder7B GRPO v2 修复 → 结论：Coder7B 上 RL 无效（06-22）
 
 | 修复项 | v1 (bug) | v2 (fixed) |
 |---|---|---|
 | BFCL args 检查 | key 是否存在 | 值是否非空 + 有意义 |
 | SQL args 检查 | key 是否存在 | 精确值匹配（normalized） |
 | placeholder 惩罚 | 无 | 空值/placeholder 给 0 分 |
+
+| 指标 | Mixed SFT | GRPO v1 | GRPO v2 | 结论 |
+|---|---|---|---|---|
+| SQL Exact | **59.0%** | 0.0% | 0.0% | ❌ 两次都崩塌 |
+| BFCL Live | **82.4%** | 80.6% | 79.1% | ❌ 每次都下降 |
+
+**结论**：Coder7B 在 BFCL 82.4% 和 SQL 99% 接近天花板，GRPO 只能引入噪声。1.5B 成功是因为起点低（80%→83.5%），Coder7B 应在数据层面改进（扩充并行样本）而非 RL。
+
+### 合成并行数据 SFT — 无泄漏版（06-22）
+
+用 MCP 数据两两组合合成 2,000 条并行调用样本（`q1 Also, q2`），完全基于已有 MCP 数据，零 BFCL 接触。
+
+| 指标 | Mixed SFT | +合成并行 SFT | Δ |
+|---|---|---|---|
+| live_simple | 78.7% | 79.3% | +0.6pp |
+| live_multiple | 94.0% | 80.7% | -13.3pp |
+| **live_parallel** | 62.5% | **100.0%** | **+37.5pp** |
+| **live_parallel_multiple** | 45.8% | **95.8%** | **+50.0pp** |
+| OVERALL | 82.4% | 82.1% | -0.3pp |
+
+### 泄漏分析：为什么无泄漏版更高？
+
+| 版本 | live_parallel | live_parallel_multiple | 训练数据 |
+|---|---|---|---|
+| BFCL 泄漏版 | 93.8% | 95.8% | BFCL 原题 + 占位符参数 |
+| 合成 MCP 版 | **100.0%** | **95.8%** | MCP 真实参数值合成 |
+
+BFCL 泄漏版用了占位符参数（`<column_name>` 等），导致模型在学习时看到无意义的参数值，部分影响了函数选择判断。合成版用 MCP verifier 中的真实参数值，模型对函数与参数的关联更有信心。
+
+其次，live_parallel 只有 16 道题——2 道的差异就能影响 12pp。两者本质在同一水平线上。
 
 结果待出。
 
