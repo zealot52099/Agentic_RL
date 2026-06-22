@@ -227,9 +227,23 @@ COMPLETION:
 
 ## 八、下一步
 
-| 方向 | 现状 |
-|---|---|
-| SQL Exact 59%→75% | 参数精确匹配 SFT |
-| live_multiple 恢复（-13pp） | 合成数据增加格式多样性 |
-| xLAM / BIRD 评测 | 外网数据下载 |
-| 补全表中 🔵 单元 | 评测进行中 |
+| 方向 | 预估提升 | 说明 |
+|---|---|---|
+| **修复标准格式数据**（P0） | BFCL +4-6pp（82%→86-88%） | 当前标准格式只放 target function（1个），应改为全量 function 列表（6个），让模型学会在标准格式下做选择 |
+| 修复后重训 Coder7B Clean SFT | — | 同时含全量标准格式 + 合成并行数据 |
+| SQL Exact 59%→75% | +16pp | 参数精确匹配 SFT |
+| xLAM / BIRD 评测 | — | 外网数据下载 |
+
+### P0 详情：修复标准格式数据
+
+**当前缺陷**：标准格式转换时 AVAILABLE FUNCTIONS 只包含被调用的 target function（1个），模型不需要做选择。
+
+```
+MCP 原始:    6 个 tool → 模型从 6 个候选中选 1 个  ✅
+标准格式(当前): 1 个 function → 模型看到什么输出什么  ❌
+标准格式(修复): 6 个 function → 模型在标准格式下选择  ✅
+```
+
+**确认无泄漏**：数据来源 MCP smoke 模板，全部 19,494 条为自生成，与 BFCL 零交集。
+
+**预估收益**：live_simple +6-9pp，live_multiple +8-12pp，BFCL Overall +4-6pp。
