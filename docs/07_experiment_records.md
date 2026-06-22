@@ -194,7 +194,128 @@ https://swanlab.cn/@yans2/agentic-rl-tool-calling/runs/46ldjiiczrmfpf5qm13z8
 - 已改为 8 PPU 训练。
 - 早期 metrics 显示 loss 约 4.0，grad_norm 约 15-18，clipping rate 为 1.0，需要持续观察固定验证 loss。
 
-## 后续实验记录模板
+### 2026-06-19 DPO Phase C v1 (bug) → v2 (Fixed)
+
+目标：
+- 在 1.5B SFT v3 基础上做 DPO，改善工具路由判别
+- 修复 v1 clarify 崩塌问题
+
+关键发现：
+- v1: 偏好数据缺少 clarify 对 → clarify 0% (崩塌), beta=0.1 过低
+- v2: 补充 clarify 偏好对 4,750 条 + beta→0.5 → 零退化 (100% val)
+- **DPO 数据必须覆盖所有输出类型，否则遗忘未覆盖类型**
+
+产物：
+- DPO v1 (bug): `output/dpo_phase_c_20260619_013121` (退化)
+- DPO v2 Fixed: `output/dpo_fixed_20260619_043239` (100% val)
+
+### 2026-06-19 Coder7B SFT + DPO (MCP-only)
+
+目标：1.5B→7B Coder，验证更大基座
+
+结果：
+- SFT: step 60-70 出现"顿悟" (grad 1665)，step 100 loss→0.68 收敛
+- DPO (MCP-only): loss 从 0.69→0.001，训练耗时 6.6h
+- **DPO 收敛但有害：BFCL V4 从 36.5%→11.5% (-25pp)**
+- 原因：MCP-only DPO 覆盖了 Coder 原生的标准 function calling 能力
+
+产物：
+- SFT: `output/coder7b_sft_20260619_230410` (323MB)
+- DPO: `output/coder7b_dpo_20260620_002247` (161MB)
+
+### 2026-06-20 BFCL V4 Live 评测 + 内部 OOD
+
+目标：首次在公开 benchmark 上区分模型
+
+结果：
+- 内部 smoke 验证集 100% (无效区分)
+- OOD held-out 5000 条 100% (同样无效)
+- **BFCL V4 首次拉开差距：1.5B DPO 80.0%, 1.5B SFT 62.4%, Coder7B DPO 11.5%, Coder7B SFT 36.5%**
+- 内部评测完全无法区分模型能力
+
+### 2026-06-21 混合格式 SFT (方向 A)
+
+目标：修复 Coder7B 格式 mismatch → BFCL 回归
+
+数据：28,448 条 (68.5% MCP + 31.5% 标准 function calling 格式)
+
+结果：
+- BFCL V4 Live: 36.5%→**82.4%** (+46pp)
+- 仅 31.5% 标准格式数据，Coder7B 从垫底跃升至第一
+- **证明 Coder 的 SQL/工具知识是完整的，SFT 只教了"输出格式纪律"**
+
+产物：
+- `output/coder7b_mixed_sft_20260621_001502` (323MB)
+
+### 2026-06-21 混合格式 DPO (方向 B, 失败)
+
+尝试 v1 和 v2 均不收敛 (loss 卡在 0.69)
+- 根因：DPO 要求单一稳定输出分布，混合格式 (MCP JSON + STD JSON) 在 token 级别冲突
+- 结论：**DPO 不兼容多输出格式场景，应使用 GRPO**
+
+### 2026-06-21 1.5B DPO → GRPO (方向 P0, 成功)
+
+目标：在 1.5B DPO 基础上验证 GRPO
+
+改进：
+- 分布外 prompt (BFCL) + temperature=1.0 + 粒度化 reward (0/0.5/1.0)
+- reward_std 从 0→0.4-0.5, entropy 从 1e-7→0.2-1.5
+
+结果：
+- BFCL V4 Live: 80.0%→**83.5%** (+3.5pp)
+- **SFT→DPO→GRPO 三阶段 pipeline 在 1.5B 上完整验证**
+- 累计提升: 62.4%→80.0%→83.5% = +21pp
+
+产物：
+- `output/grpo_15b_dpo_20260621_153153/adapter`
+
+### 2026-06-22 BFCL V3 SQL + 新 Benchmark 评测
+
+目标：打通 SQL 和 Agentic 评测维度
+
+SQL 结果：
+- Coder7B 基座: Func 3% (知识完整，格式乱)
+- Coder7B Mixed SFT: Func **99%**, Param **87%**, Exact **59%** (+96pp)
+- 1.5B GRPO: Func 51%, Param 39%, Exact 17%
+
+Agentic/Multi-Turn：BFCL Multi-Turn 100% JSON 合法, Web Search 100%
+
+新 Benchmark 首次评测：
+- WikiSQL: 0% (模型输出 JSON 函数调用，需 prompt 适配)
+- Spider: 能生成 SQL 关键词
+- Glaive FC: 0% (数据格式不兼容)
+
+### 2026-06-22 RL 方法选型分析
+
+候选方法评估：
+- **GRPO**: ✅ 采用 (Dense 模型, 短 JSON, 粒度化 reward, 已验证 +3.5pp)
+- GSPO: ❌ 解决 MoE 路由问题，Qwen2.5 是 Dense 不触发
+- DAPO: ❌ 解决长 CoT (>1000 tokens) 熵坍缩，短 JSON 不触发
+- Dr.GRPO: ❌ 修复长度偏差，输出均匀 50-100 tokens 优化很小
+- PPO: ❌ 太重，需要 Critic 模型
+- RLVR: ❌ reward 粒度不够 (仅二元)
+
+文档路径：`docs/experiments/2026-06-20_experiment_log.md` (详细分析)
+
+### 2026-06-22 GRPO Coder7B 能力 1+2 (进行中)
+
+目标：GRPO 优化 SQL Exact (59%→70%+) + BFCL Live (82%→85%+)
+
+配置：240 prompts (80 SQL + 160 BFCL Live), group=4, temp=1.0, beta=0.04
+
+状态：🟢 训练中 (480 steps, ~1.7h)
+
+BFCL V4 最终排名：
+```
+1.5B GRPO              83.5%  🥇  SFT→DPO→GRPO
+Coder7B Mixed SFT      82.4%  🥈  混合格式 SFT
+1.5B DPO               80.0%
+1.5B SFT               62.4%
+Coder7B SFT (MCP)      36.5%
+Coder7B DPO (MCP)      11.5%
+```
+
+
 
 ~~~markdown
 ## YYYY-MM-DD <run_name>
