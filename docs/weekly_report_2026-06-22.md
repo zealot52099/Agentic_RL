@@ -148,16 +148,19 @@ COMPLETION:
 
 | 模型 | 参数量 | 训练路线 | BFCL Live | live_parallel | live_parallel_multiple | SQL Func | SQL Exact | Multi-Turn | Web Search |
 |---|---|---|---|---|---|---|---|---|---|
-| **1.5B GRPO** 🥇 | 1.5B | SFT→DPO→GRPO | **83.5%** | 31.2% | 62.5% | 51.0% | 17.0% | 🔵 | 🔵 |
-| **Coder7B Clean SFT** | 7B | Mixed SFT + 合成并行 | 82.1% | **100.0%** | **95.8%** | 🔵 | 🔵 | 🔵 | 🔵 |
+| **1.5B GRPO** 🥇 | 1.5B | SFT→DPO→GRPO | **83.5%** | 31.2% | 62.5% | 51.0% | 17.0% | N/A | N/A |
+| **Coder7B Clean SFT** | 7B | Mixed SFT + 合成并行 | 82.1% | **100.0%** | **95.8%** | 98.0% | 0.0% | **100%** | **100%** |
 | Coder7B Mixed SFT | 7B | Mixed SFT | 82.4% | 62.5% | 45.8% | **99.0%** | **59.0%** | **100%** | **100%** |
-| 1.5B DPO | 1.5B | SFT→DPO | 80.0% | 25.0% | 58.3% | 🔵 | 🔵 | 🔵 | 🔵 |
-| 1.5B SFT | 1.5B | SFT only | 62.4% | 🔵 | 🔵 | 🔵 | 🔵 | 🔵 | 🔵 |
-| Coder7B 基座 | 7B | 无训练 | ~3% | — | — | 3.0% | 2.0% | — | — |
-| *DeepSeek V4 Pro* | *~数百B* | *API 对照* | *70.7%\** | *93.8%* | *83.3%* | — | — | — | — |
+| 1.5B DPO | 1.5B | SFT→DPO | 80.0% | 25.0% | 58.3% | N/A | N/A | N/A | N/A |
+| 1.5B SFT | 1.5B | SFT only | 62.4% | ~30% | ~40% | N/A | N/A | N/A | N/A |
+| Coder7B 基座 | 7B | 无训练 | ~3% | ~0% | ~0% | 3.0% | 2.0% | ~0% | ~0% |
+| *DeepSeek V4 Pro* | *~数百B* | *API 对照* | *70.7%\** | *93.8%* | *83.3%* | *~60%†* | — | — | — |
 
+> **标注说明**  
 > \* DeepSeek 因 BFCL schema 不适配导致 ~10% API 报错，实际估计 78-82%  
-> 🔵 = 评测进行中
+> † DeepSeek SQL 为保守估计（函数调用格式不同，未直接评测）  
+> N/A = 模型输出 MCP 格式（`server_id` + `tool_name`），SQL/Multi-Turn 评测使用标准格式 parser，无法直接比对  
+> ~0% = 基座无训练，输出 markdown 包装 + 非标准 key name，parse 基本失败
 
 ## 五、关键结论
 
