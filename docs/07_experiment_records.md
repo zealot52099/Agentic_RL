@@ -129,6 +129,20 @@ MCP 格式输出 `[{"server_id":"x","tool_name":"y"}]`，标准格式输出 `{"n
 
 **结论**：Coder7B 在 BFCL 82.4% 和 SQL 99% 接近天花板，GRPO 只能引入噪声。1.5B 成功是因为起点低（80%→83.5%），Coder7B 应在数据层面改进（扩充并行样本）而非 RL。
 
+### live_multiple 全量评测 + 自建并行 holdout（06-23）
+
+BFCL V4 live_parallel 全量仅 15 题，统计不可靠。自建 200 条 MCP 合成并行 holdout + live_multiple 扩至全量 1,053 条。
+
+| Round 2 SFT | live_multiple (1053) | Self-built parallel (200) |
+|---|---|---|
+| 94.4% | 全量比 150 条子集高 3.7pp |
+
+### Round 3 SQL Exact 优化（06-23，进行中）
+
+Round 2 SQL Exact=26%，远低于 Mixed SFT 59%。Round 3 数据配方：15% SQL（增强参数提取）+ 10% 并行 + 22% 标准全量 + 54% MCP（23,000 条）。目标 SQL Exact→50%+。
+
+---
+
 ### 合成并行数据 SFT — 无泄漏版（06-22）
 
 用 MCP 数据两两组合合成 2,000 条并行调用样本（`q1 Also, q2`），完全基于已有 MCP 数据，零 BFCL 接触。
