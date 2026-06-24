@@ -181,10 +181,13 @@ Qwen2.5-Coder-7B-Instruct 专为代码和结构化输出场景设计，预训练
 | 1.5B DPO | 1.5B | SFT→DPO | 80.0% | 25.0% | 58.3% | N/A | N/A | N/A | N/A |
 | 1.5B SFT | 1.5B | SFT only | 62.4% | ~30% | ~40% | N/A | N/A | N/A | N/A |
 | Coder7B 基座 | 7B | 无训练 | ~3% | ~0% | ~0% | 3.0% | 2.0% | ~0% | ~0% |
+| Mixed 80/20 SFT (Indist) | 7B | 80%chat+20%OOD | 88.8% | — | — | 100% | 0%（scorer bug） | — | — |
+| Mixed 80/20 SFT (OOD) | 7B | 80%chat+20%OOD | 85.3% | — | — | 100% | 24.0% | — | — |
 | *DeepSeek V4 Pro* | *~数百B* | *API 对照* | *70.7%\** | *93.8%* | *83.3%* | *44.0%* | *28.0%* | — | — |
 
 > **标注说明**  
 > \* DeepSeek 因 BFCL schema 不适配导致 ~10% API 报错，实际估计 78-82%  
+> Mixed 80/20: format gap 从 32pp 压缩到 3.5pp，验证了混合格式训练的有效性
 > 
 > N/A = 模型输出 MCP 格式（`server_id` + `tool_name`），SQL/Multi-Turn 评测使用标准格式 parser，无法直接比对  
 > ~0% = 基座无训练，输出 markdown 包装 + 非标准 key name，parse 基本失败
