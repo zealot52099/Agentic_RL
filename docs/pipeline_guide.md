@@ -187,16 +187,16 @@ accuracy = 1 if pred_names & expected_names else 0
 
 | 数据集 | 路径 | 数量 | 用途 |
 |---|---|---|---|
-| MCP Smoke 原始 | `datasets/processed/mcp_lora_sft_v3_20260618/sft_v2_all/train_sft.jsonl` | 19,494 | 基础工具选择 |
-| 合成并行 | `datasets/processed/mcp_lora_sft_v3_20260618/sft_clean_parallel/train_clean_parallel.jsonl` | 2,000 | 数组输出 |
-| Spider (SQL) | `datasets/modelscope/spider_train.jsonl` | 7,000 | SQL 生成 |
-| WikiSQL | `datasets/modelscope/wikisql_test.parquet` | 7,500 | SQL 多样性 |
-| HERMES FC | `datasets/modelscope/hermes_fc_v1_train.jsonl` | 1,000 | 工具调用 |
-| Glaive FC v2 | `datasets/modelscope/glaive_fc_v2_train.jsonl` | 1,000 | 工具调用 |
-| SQL Create Context | `datasets/modelscope/sql_create_context.jsonl` | 500 | SQL |
-| **Phase 3 (OOD 全量)** | `datasets/processed/phase3_final/train_phase3.jsonl` | 18,000+ | 零泄漏 |
-| **Phase 4v2 (In-dist)** | `datasets/processed/phase4v2/train_phase4v2.jsonl` | 12,500 | chat_template |
-| GRPO prompt 池 | `datasets/processed/grpo_pool/grpo_prompts.jsonl` | 3,305 | RL 训练 |
+| MCP Smoke 原始 | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/datasets/processed/mcp_lora_sft_v3_20260618/sft_v2_all/train_sft.jsonl` | 19,494 | 基础工具选择 |
+| 合成并行 | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/datasets/processed/mcp_lora_sft_v3_20260618/sft_clean_parallel/train_clean_parallel.jsonl` | 2,000 | 数组输出 |
+| Spider (SQL) | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/datasets/modelscope/spider_train.jsonl` | 7,000 | SQL 生成 |
+| WikiSQL | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/datasets/modelscope/wikisql_test.parquet` | 7,500 | SQL 多样性 |
+| HERMES FC | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/datasets/modelscope/hermes_fc_v1_train.jsonl` | 1,000 | 工具调用 |
+| Glaive FC v2 | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/datasets/modelscope/glaive_fc_v2_train.jsonl` | 1,000 | 工具调用 |
+| SQL Create Context | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/datasets/modelscope/sql_create_context.jsonl` | 500 | SQL |
+| **Phase 3 (OOD 全量)** | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/datasets/processed/phase3_final/train_phase3.jsonl` | 18,000+ | 零泄漏 |
+| **Phase 4v2 (In-dist)** | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/datasets/processed/phase4v2/train_phase4v2.jsonl` | 12,500 | chat_template |
+| GRPO prompt 池 | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/datasets/processed/grpo_pool/grpo_prompts.jsonl` | 3,305 | RL 训练 |
 
 ### 测试集
 
@@ -206,25 +206,25 @@ accuracy = 1 if pred_names & expected_names else 0
 | BFCL V4 live_multiple | `.../BFCL_v4_live_multiple.json` | 1,052 | Func name |
 | BFCL V4 live_parallel | `.../BFCL_v4_live_parallel.json` | 15 | Parallel |
 | BFCL V4 live_parallel_multiple | `.../BFCL_v4_live_parallel_multiple.json` | 23 | Parallel+ |
-| BFCL V3 SQL | `datasets/eval_suite/huggingface/gorilla-llm__Berkeley-Function-Calling-Leaderboard/BFCL_v3_sql.json` | 100 | Func+Exact |
-| BFCL V3 SQL GT | `datasets/eval_suite/.../possible_answer/BFCL_v3_sql.json` | 100 | GT |
+| BFCL V3 SQL | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/datasets/eval_suite/huggingface/gorilla-llm__Berkeley-Function-Calling-Leaderboard/BFCL_v3_sql.json` | 100 | Func+Exact |
+| BFCL V3 SQL GT | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/datasets/eval_suite/.../possible_answer/BFCL_v3_sql.json` | 100 | GT |
 | BFCL V4 Multi-Turn | `/opt/ac2/.../BFCL_v4_multi_turn_base.json` | 200 | JSON |
 | BFCL V4 Web Search | `/opt/ac2/.../BFCL_v4_web_search.json` | 100 | JSON |
-| GSM8K | `datasets/eval_suite/huggingface/openai__gsm8k/main/test-00000-of-00001.parquet` | 1,319 | Math |
-| IFEval | `datasets/eval_suite/huggingface/google__IFEval/ifeval_input_data.jsonl` | 540 | 指令跟随 |
-| HumanEval+ | `datasets/eval_suite/huggingface/openai__openai_humaneval/openai_humaneval/test-00000-of-00001.parquet` | — | 代码 |
-| MBPP | `datasets/eval_suite/huggingface/google-research-datasets__mbpp/` | — | 代码 |
-| SWE-bench Lite | `datasets/eval_suite/huggingface/SWE-bench__SWE-bench_Lite/` | — | 软件工程 |
+| GSM8K | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/datasets/eval_suite/huggingface/openai__gsm8k/main/test-00000-of-00001.parquet` | 1,319 | Math |
+| IFEval | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/datasets/eval_suite/huggingface/google__IFEval/ifeval_input_data.jsonl` | 540 | 指令跟随 |
+| HumanEval+ | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/datasets/eval_suite/huggingface/openai__openai_humaneval/openai_humaneval/test-00000-of-00001.parquet` | — | 代码 |
+| MBPP | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/datasets/eval_suite/huggingface/google-research-datasets__mbpp/` | — | 代码 |
+| SWE-bench Lite | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/datasets/eval_suite/huggingface/SWE-bench__SWE-bench_Lite/` | — | 软件工程 |
 
 ### 模型产出
 
 | 模型 | 路径 | BFCL | SQL Exact |
 |---|---|---|---|
-| Round 4 (最佳 BFCL) | `output/coder7b_round4_sql_sft_20260623_220257/adapter` | 93.2% | 18% |
-| Mixed SFT (最佳 SQL) | `output/coder7b_mixed_sft_20260621_001502/adapter` | 82.4% | **59%** |
-| Phase 3 (全量 OOD) | `output/coder7b_phase3_1gpu_20260625_221844/adapter` | 92.6% | 24% |
-| Phase 4v2 (In-dist) | `output/coder7b_phase4_1gpu_*/adapter` | 🔵训练中 | — |
-| 1.5B GRPO | `output/grpo_15b_dpo_20260621_153153/adapter` | 83.5% | 17% |
+| Round 4 (最佳 BFCL) | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/output/coder7b_round4_sql_sft_20260623_220257/adapter` | 93.2% | 18% |
+| Mixed SFT (最佳 SQL) | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/output/coder7b_mixed_sft_20260621_001502/adapter` | 82.4% | **59%** |
+| Phase 3 (全量 OOD) | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/output/coder7b_phase3_1gpu_20260625_221844/adapter` | 92.6% | 24% |
+| Phase 4v2 (In-dist) | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/output/coder7b_phase4_1gpu_*/adapter` | 🔵训练中 | — |
+| 1.5B GRPO | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/output/grpo_15b_dpo_20260621_153153/adapter` | 83.5% | 17% |
 
 ### 文档
 
