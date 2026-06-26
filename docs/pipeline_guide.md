@@ -1,0 +1,193 @@
+# MCP Agent 训练评测流程
+
+> 可复用的端到端 pipeline，适用于 Coder7B/Coder14B/其他模型迁移
+
+## 一、环境准备
+
+```bash
+# 硬件: 1-16 PPU/GPU，单卡 7B LoRA 约需 20GB 显存
+# 依赖: torch, transformers, peft, trl, swanlab, bfcl_eval, sqlparse
+
+pip install peft trl swanlab bfcl-eval sqlparse
+```
+
+## 二、数据准备
+
+### 2.1 数据格式标准
+
+**所有训练数据统一为一种格式**。推荐 OOD native 格式（训练=评测对齐）：
+
+```
+AVAILABLE FUNCTIONS:
+[{函数定义}]
+
+USER:
+{用户query}
+
+ASSISTANT:
+{completion}
+```
+
+### 2.2 必需数据源
+
+| 数据源 | 数量 | 用途 | 来源 |
+|---|---|---|---|
+| MCP 工具调用 | 6K+ | 函数选择 | 自建/开源 |
+| 并行调用 | 2K | 数组输出 | MCP合成或开源 |
+| SQL 函数调用 | 3K | SQL 生成 | Spider + BFCL格式对齐 |
+| Math COT | 500 | 推理能力 | GSM8K |
+| Clarify/No-tool | 1.5K | 拒调/澄清 | MCP smoke |
+
+### 2.3 格式规则（关键！）
+
+```python
+# ✅ 正确: 所有值用双层嵌套
+columns: [["name"], ["age"]]
+conditions: [["id = 1"]]
+
+# ❌ 错误: 单层
+columns: ["name", "age"]
+
+# ✅ 正确: function calling 用 name + arguments
+{"name": "query_records", "arguments": {"field": "project"}}
+
+# ❌ 错误: MCP 格式(训练和评测不一致)
+[{"server_id": "database", "tool_name": "query_records", "arguments": {...}}]
+```
+
+### 2.4 禁止事项
+
+- ❌ 测试集数据**绝对不可**进入训练集
+- ❌ 不要在数据中混用多种 prompt 格式
+- ❌ 不要让 prompt 和 completion 格式矛盾（如在 prompt 说"输出 XML"但 completion 是 JSON）
+
+## 三、训练
+
+### 3.1 配置
+
+```bash
+# 单卡 (推荐，稳定)
+CUDA_VISIBLE_DEVICES=0 python3 train_sft.py
+
+# 多卡 DDP
+torchrun --nproc_per_node=16 train_lora_sft.py
+```
+
+| 参数 | 值 |
+|---|---|
+| Model | Qwen2.5-Coder-7B-Instruct |
+| LoRA | r=32, alpha=64, dropout=0.05 |
+| LR | 2e-6 (SQL), 5e-6 (标准) |
+| Steps | 300-500 |
+| Warmup | 50 steps |
+| BS | 2 (单卡) / 16 (16PPU) |
+| Seq Len | 2048 |
+
+### 3.2 训练脚本模板
+
+```bash
+#!/bin/bash
+set -e
+source /usr/local/PPU_SDK/envsetup.sh  # PPU 环境，普通 GPU 跳过
+export CUDA_VISIBLE_DEVICES=0
+export TRAIN_DATA=/path/to/train.jsonl
+export OUTPUT_DIR=/path/to/output_$(date +%Y%m%d_%H%M%S)
+export SWANLAB_RUN=experiment_name
+mkdir -p $OUTPUT_DIR
+
+python3 train_sft.py 2>&1 | tee -a $OUTPUT_DIR/train.log
+```
+
+## 四、评测
+
+### 4.1 评测矩阵
+
+| 评测 | 格式 | 指标 | 数据路径 |
+|---|---|---|---|
+| BFCL V4 Live | OOD native | Func name accuracy | `bfcl_eval/data/BFCL_v4_live_*.json` |
+| BFCL V3 SQL | OOD native | Func + Exact | `eval_suite/.../BFCL_v3_sql.json` |
+| BFCL Multi-Turn | OOD native | JSON validity | `bfcl_eval/data/BFCL_v4_multi_turn_base.json` |
+| BFCL Web Search | OOD native | JSON validity | `bfcl_eval/data/BFCL_v4_web_search.json` |
+| Self-built Parallel | OOD native | Parallel accuracy | 自建 |
+
+### 4.2 SQL Exact 评分关键
+
+```python
+def nv(v):  # 归一化：递归展平嵌套列表
+    if isinstance(v, list):
+        flat = []
+        def _f(x):
+            if isinstance(x, list):
+                for i in x: _f(i)
+            else: flat.append(str(x).strip())
+        _f(v)
+        return ','.join(sorted(flat))
+    return str(v).strip()
+
+# 然后逐参数比较 nv(pred[pk]) == nv(gt[pk])
+```
+
+### 4.3 BFCL Live 评分
+
+```python
+# 提取 model output 中的函数名（支持裸JSON和数组）
+obj = safe_parse(model_output)
+if isinstance(obj, dict): obj = [obj]
+pred_names = set(item.get('name','') for item in obj if isinstance(item, dict))
+expected_names = set(f['name'] for f in function_definitions)
+accuracy = 1 if pred_names & expected_names else 0
+```
+
+## 五、完整流程
+
+```
+1. 数据准备
+   ├── 确认所有数据源格式统一
+   ├── SQL 参数全部双层嵌套
+   ├── 测试集不入训练集
+   └── Prompt 和 completion 格式一致
+
+2. 格式验证（训练前必做）
+   ├── 每个数据源抽1个样例展示
+   ├── 对比训练样例 vs 测试样例格式
+   └── 检查 SQL 参数嵌套是否正确
+
+3. 训练
+   ├── 单卡优先保证稳定性
+   ├── 观察 loss 收敛（7B 模型 step 50-100 内应收敛到 <1.0）
+   └── 异常: loss 卡在 >2.0、step 1 后无进度
+
+4. 评测
+   ├── BFCL Live + SQL + Multi-Turn + Web Search
+   ├── 结果写入 log 文件（nohup > logfile）
+   └── 启动 GPU 占用脚本
+
+5. 结果分析
+   ├── 对比历史最佳
+   ├── 检查 SQL Exact vs Func 差距
+   └── 决定下步方向（GRPO/更多数据/新基座）
+```
+
+## 六、关键教训
+
+| # | 教训 | 后果 |
+|---|---|---|
+| 1 | **测试集绝对不能进训练集** | 虚高 6-12pp |
+| 2 | **prompt 和 completion 必须格式一致** | Exact=0% |
+| 3 | **SQL 参数格式必须对齐评测** | 反复从 59% 降到 18% |
+| 4 | **不要用 regex 提取 SQL 参数** | 基座知识被覆盖 |
+| 5 | **SSH 输出必须 nohup > logfile** | 无数次结果丢失 |
+| 6 | **单卡比 16-PPU DDP 更稳定** | 训练反复崩溃 |
+| 7 | **训练前先验证数据格式** | 节省无效训练时间 |
+| 8 | **Coder7B 的 SQL 知识来自预训练** | 外部 SQL 数据可能污染 |
+
+## 七、产出物清单
+
+| 产出 | 路径 |
+|---|---|
+| 最佳 BFCL 模型 | Round 4 OOD (93.2%) |
+| 最佳 SQL Exact 模型 | Mixed SFT OOD (59%) |
+| 训练数据模板 | `datasets/processed/phase3_final/` |
+| In-dist 评测模板 | `datasets/processed/phase4v2/` |
+| 评测脚本 | `eval_*_fixed.py` |
+| GRPO prompt 池 | `grpo_pool/grpo_prompts.jsonl` |
