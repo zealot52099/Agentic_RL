@@ -226,11 +226,27 @@ accuracy = 1 if pred_names & expected_names else 0
 | Phase 4v2 (In-dist) | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/output/coder7b_phase4_1gpu_*/adapter` | 🔵训练中 | — |
 | 1.5B GRPO | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/output/grpo_15b_dpo_20260621_153153/adapter` | 83.5% | 17% |
 
+### 评测脚本
+
+| 脚本 | 绝对路径 |
+|---|---|
+| SQL 评测 (nv归一化) | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/scripts/eval_sql_fixed.py` |
+| BFCL Live + SQL 联合 | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/scripts/eval_coder7b.py` |
+| Phase 4 In-dist | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/scripts/eval_phase4.py` |
+| DeepSeek API 评测 | 本地: `C:/Users/Xpeng/run_deepseek_eval.py` |
+| 数据构建 Phase 3 | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/scripts/build_phase3_final.py` |
+| 数据构建 Phase 4v2 | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/scripts/build_p4v2_final.py` |
+| 训练启动单卡 | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/scripts/train_coder7b_sft.py` |
+| 训练启动多卡 | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/scripts/remote/train_lora_sft.py` |
+| GRPO 训练 | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/scripts/train_grpo_c7b_fixed.py` |
+| GPU 占用 | `/code/run_gpu_16.sh` |
+
 ### 文档
 
-| 文档 | 路径 |
+| 文档 | 绝对路径 |
 |---|---|
-| 流程指南 | `docs/pipeline_guide.md` |
-| 实验记录 | `docs/07_experiment_records.md` |
+| 流程指南 | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/docs/pipeline_guide.md` |
+| 实验记录 | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/docs/07_experiment_records.md` |
+| 周报 | `/workspace/yans2@xiaopeng.com/agentic_rl_pipeline/docs/weekly_report_2026-06-22.md` |
 | 周报 | `docs/weekly_report_2026-06-22.md` |
 | 训练计划 Round 2 | `docs/training_plan_round2.md` |
