@@ -101,3 +101,47 @@ Success criteria:
 - SQL execution accuracy should approach or exceed Phase8 `62.11%`.
 - Tool action/tool-name exact should stay near Phase6 and clearly above Phase8-from-Phase5.
 - GSM8K fixed subset should not regress by more than 1 percentage point.
+
+## Runtime Update: SwanLab Fix and First Metrics
+
+The first launch `phase9_swift_mixed_sql_tool_grpo_sync16_20260629_183720` failed before training because SwanLab local mode required `swanboard`:
+
+```text
+ImportError: Please install swanboard to use 'local' mode: pip install 'swanlab[dashboard]'
+```
+
+Fix applied on the remote job:
+
+```bash
+/opt/ac2/bin/python -m pip install 'swanlab[dashboard]' --no-cache-dir
+```
+
+This installed:
+
+```text
+swanboard-0.1.9b3
+peewee-3.19.0
+ujson-5.13.0
+```
+
+The successful restarted run is:
+
+```text
+Run: runs/phase9_swift_mixed_sql_tool_grpo_sync16_20260629_184129
+PID: 1711045
+Log: logs/phase9_swift_mixed_sql_tool_grpo_sync16_20260629_184129.log
+Metrics: runs/phase9_swift_mixed_sql_tool_grpo_sync16_20260629_184129/v0-20260629-184156/logging.jsonl
+```
+
+Initial metrics at `99/2000`:
+
+| Step | Reward | Reward std | Grad norm | KL | Mean length | Memory | Speed | ETA |
+|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| 99/2000 | 0.9750 | 0.0000 | 0.00038 | 0.0000315 | 19.81 | 36.18 GiB | 2.34 s/it | ~1h14m |
+
+Recent-step reward is intentionally volatile because the mixed stream alternates SQL execution and tool/no-tool/clarify tasks. The healthier indicators at this stage are: no NaN, nonzero gradients on variable-reward groups, near-zero KL, no completion clipping, and steady step progress.
+
+Current known non-blocking logs:
+
+- `triton.language.target_info` warnings from vLLM/Triton compatibility.
+- ModelScope connection retries for `unknown` model metadata. Local model loading continues and training steps are being written.

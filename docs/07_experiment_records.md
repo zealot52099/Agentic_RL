@@ -517,3 +517,11 @@ Phase9 初步目标：
 - SQL execution accuracy 接近或超过 Phase8 `62.11%`。
 - Tool action/tool-name exact 尽量保持 Phase6 水平，明显高于 Phase8-from-Phase5。
 - GSM8K fixed subset 回退不超过 1 pp。
+
+Phase9 runtime update:
+
+- First launch `phase9_swift_mixed_sql_tool_grpo_sync16_20260629_183720` failed before training because SwanLab local mode lacked `swanboard`.
+- Installed `swanlab[dashboard]`, which added `swanboard-0.1.9b3`.
+- Restarted successfully as `phase9_swift_mixed_sql_tool_grpo_sync16_20260629_184129`, PID `1711045`.
+- At step `99/2000`, reward `0.9750`, KL `0.0000315`, memory `36.18 GiB`, train speed about `2.34 s/it`, ETA about `1h14m`.
+- Metrics path: `runs/phase9_swift_mixed_sql_tool_grpo_sync16_20260629_184129/v0-20260629-184156/logging.jsonl`.
