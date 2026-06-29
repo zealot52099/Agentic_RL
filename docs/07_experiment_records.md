@@ -525,3 +525,14 @@ Phase9 runtime update:
 - Restarted successfully as `phase9_swift_mixed_sql_tool_grpo_sync16_20260629_184129`, PID `1711045`.
 - At step `99/2000`, reward `0.9750`, KL `0.0000315`, memory `36.18 GiB`, train speed about `2.34 s/it`, ETA about `1h14m`.
 - Metrics path: `runs/phase9_swift_mixed_sql_tool_grpo_sync16_20260629_184129/v0-20260629-184156/logging.jsonl`.
+
+Phase9 final evaluation:
+
+| Model | SQL exec acc | SQL exec rate | Tool action exact | Tool name exact | JSON exact | GSM8K fixed-256 acc |
+|---|---:|---:|---:|---:|---:|---:|
+| Phase5 SFT | 55.47% | 79.30% | 81.41% | 79.74% | 37.73% | 76.56% |
+| Phase6 SQL/tool SFT | 51.56% | 73.44% | 95.72% | 95.35% | 50.56% | 76.17% |
+| Phase8 SQL-only GRPO from Phase5 | 62.11% | 88.67% | 81.23% | 79.55% | 37.73% | 76.17% |
+| Phase9 mixed GRPO from Phase6 | 55.86% | 80.08% | 95.72% | 95.35% | 50.56% | 75.00% |
+
+Conclusion: Phase9 preserved Phase6 tool-call quality, recovered SQL above Phase6, but did not match Phase8 SQL-only GRPO. GSM8K fixed-256 regressed mildly to 75.00%. Next run should use staged SQL-only then mixed retention, or stronger SQL reward weighting.

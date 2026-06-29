@@ -145,3 +145,40 @@ Current known non-blocking logs:
 
 - `triton.language.target_info` warnings from vLLM/Triton compatibility.
 - ModelScope connection retries for `unknown` model metadata. Local model loading continues and training steps are being written.
+
+## Final Evaluation
+
+Phase9 completed at `2000/2000` and was merged into:
+
+```text
+evals/phase9_swift_mixed_sql_tool_grpo_sync16_20260629/merged/phase9_mixed_grpo_sync16_step2000
+```
+
+Training summary:
+
+```text
+Runtime: 3603s
+Train loss: 1.462e-05
+Final checkpoint: checkpoint-2000
+Trainable params: 40.37M, 0.5273%
+```
+
+Evaluation results, all internal fixed probes unless explicitly noted:
+
+| Model | SQL exec acc | SQL exec rate | Tool action exact | Tool name exact | JSON exact | GSM8K fixed-256 acc |
+|---|---:|---:|---:|---:|---:|---:|
+| Phase5 SFT | 55.47% | 79.30% | 81.41% | 79.74% | 37.73% | 76.56% |
+| Phase6 SQL/tool SFT | 51.56% | 73.44% | 95.72% | 95.35% | 50.56% | 76.17% |
+| Phase8 SQL-only GRPO from Phase5 | 62.11% | 88.67% | 81.23% | 79.55% | 37.73% | 76.17% |
+| Phase9 mixed GRPO from Phase6 | 55.86% | 80.08% | 95.72% | 95.35% | 50.56% | 75.00% |
+
+Interpretation:
+
+- Phase9 successfully preserved Phase6 tool-call capability. Tool action exact and tool name exact are effectively unchanged from Phase6 and much better than Phase8-from-Phase5.
+- Phase9 improved SQL execution accuracy over Phase6 by `+4.30 pp`, but only slightly over Phase5 by `+0.39 pp` and clearly below Phase8 by `-6.25 pp`.
+- GSM8K fixed-256 dropped to `75.00%`, around `-1.17 pp` versus Phase6/Phase8 and `-1.56 pp` versus Phase5. This is still small but should be treated as a regression signal.
+- MMLU-Pro was not rerun because the required parquet file is still absent on the job. These numbers must not be treated as official full benchmark results.
+
+Conclusion:
+
+Phase9 achieved the intended tool-retention goal but did not achieve the SQL-improvement goal. The mixed GRPO reward likely under-optimized SQL because many tool/no-tool/clarify groups already receive high or low-variance rewards, while the SQL execution signal is harder and gets diluted. The next run should keep Phase6 as the base but use a staged schedule: short SQL-only GRPO from Phase6, then a lower-LR mixed tool-retention GRPO, or increase SQL sampling ratio and use per-task reward weighting.
