@@ -419,3 +419,101 @@ SwanLab：
 3. 用 Phase5/Phase6/Phase7 同口径内部 WikiSQL execution probe 评测。
 4. 同步补跑 tool-call probe，防止 SQL GRPO 损伤工具调用能力。
 5. 若 Phase8 相对 Phase7 没有提升，优先检查 reward 稀疏性、训练集与评测集分布、采样温度、`num_generations` 和 LR，而不是直接加大训练步数。
+
+---
+
+## 2026-06-29: Phase9 Mixed SQL + Tool-Call GRPO
+
+目标：从 `Phase6 merged` 出发，做混合 SQL execution + tool-call/no-tool/clarify GRPO，避免 Phase8 只提升 SQL 而没有继承 Phase6 tool-call 增益的问题。
+
+训练链路：
+
+```text
+Qwen2.5-Coder-7B-Instruct
+  -> Phase5 SFT
+  -> Phase6 SQL/tool SFT merged
+  -> Phase9 mixed SQL + tool-call GRPO
+```
+
+远端环境：
+
+```text
+Job: bifrost-2026060214414601-yans2
+Project: /workspace/yans2@xiaopeng.com/agentic_rl_pipeline
+Base model: runs/phase6_qwen25_coder7b_sqltool_lora_ppu16_lr6e7_seed20260627_noswan_20260627_105305/merged_hf
+Framework: ms-swift rlhf --rlhf_type grpo
+Distributed: torch.distributed.run --nproc_per_node 16 + DeepSpeed ZeRO-1
+Tracking: SwanLab local mode
+```
+
+新增文件：
+
+```text
+scripts/remote/prepare_phase9_mixed_grpo.py
+scripts/remote/swift_mixed_sql_tool_reward_plugin.py
+scripts/remote/run_swift_mixed_sql_tool_grpo_ppu16.sh
+datasets/processed/phase9_mixed_sql_tool_grpo_20260629/train.jsonl
+datasets/processed/phase9_mixed_sql_tool_grpo_20260629/manifest.json
+```
+
+数据配比：
+
+| Task type | Count | Reward |
+|---|---:|---|
+| SQL execution | 4096 | SQL parse, safe SELECT, SQLite execution success, result exact, normalized SQL exact |
+| tool_call | 2048 | JSON parse, action match, call count, tool name, argument exact |
+| no_tool | 593 | JSON parse, action match, empty calls, schema discipline |
+| clarify | 636 | JSON parse, action match, missing-field overlap, non-empty clarification message |
+
+说明：SQL 样本来自 Phase8 可执行 WikiSQL GRPO 数据；tool/no-tool/clarify 样本来自 Phase5 unified train split。该数据不是官方 benchmark，而是内部 RLVR 训练集。
+
+启动命令摘要：
+
+```bash
+REPORT_TO=swanlab SWANLAB_MODE=local MAX_STEPS=2000 \
+  nohup bash scripts/remote/run_swift_mixed_sql_tool_grpo_ppu16.sh \
+  phase9_swift_mixed_sql_tool_grpo_sync16_20260629_183720 \
+  > logs/phase9_swift_mixed_sql_tool_grpo_sync16_20260629_183720.log 2>&1 &
+```
+
+关键超参：
+
+```text
+LoRA: rank 16, alpha 32, dropout 0.05
+LR: 2e-7
+Max steps: 2000
+num_generations: 4
+max_length: 1536
+max_completion_length: 128
+beta: 0.03
+loss_type: grpo
+```
+
+启动状态：
+
+| Time | Status |
+|---|---|
+| 2026-06-29 18:37 | Phase9 run started, PID 1700020 |
+| 2026-06-29 18:38 | 16 PPU devices `PPU-ZW810E` detected; distributed/vLLM initialization in progress |
+
+已知注意点：
+
+- 这次从 Phase6 merged 起步，不再复用 Phase5 起点。
+- Phase9 是 mixed reward，目标是同时看 WikiSQL execution accuracy 和内部 tool-call validation 是否改善或至少不回退。
+- 远端只有 `/opt/ac2/bin/python`；任何 Python/Swift 调用前都需要显式设置 PPU SDK `LD_LIBRARY_PATH`，否则会报 `libhggcrt1.so`。
+- `triton.language.target_info` 仍可能在 vLLM 初始化时出现兼容性警告；Phase8 证明这类日志不一定阻断训练，需结合进程和 step metrics 判断。
+
+验收评测计划：
+
+| Metric group | Dataset | Label |
+|---|---|---|
+| SQL execution | Internal rebased WikiSQL 256 probe | internal, not official WikiSQL benchmark |
+| Tool-call | `phase5_unified_20260626/validation.jsonl` | internal unified validation |
+| General retention | GSM8K fixed 256 subset | internal subset |
+| Instruction following | IFEval if runtime permits | public benchmark rerun |
+
+Phase9 初步目标：
+
+- SQL execution accuracy 接近或超过 Phase8 `62.11%`。
+- Tool action/tool-name exact 尽量保持 Phase6 水平，明显高于 Phase8-from-Phase5。
+- GSM8K fixed subset 回退不超过 1 pp。
