@@ -335,3 +335,87 @@ SwanLab：
 
 - 
 ~~~
+
+---
+
+## 2026-06-29：SQL Execution GRPO 实验结果与分析
+
+### Phase7：16 卡并行独立 LoRA GRPO
+
+目标：验证 SQL execution reward 是否能提升 WikiSQL 风格 SQL 生成的可执行正确率。
+
+训练方式：
+
+- 入口：`runs/phase7_wikisql_exec_grpo_torchrun_independent16_20260628_224418`
+- 基座：`phase5_qwen25_coder7b_lora_ppu16_lr1e6_seed20260626_20260626_150539/merged_hf`
+- 资源：16 PPU
+- 重要限制：该实验是 16 个 rank 各自训练独立 LoRA adapter，没有做 DDP all-reduce，因此不是一个同步 16 卡 GRPO 模型。
+
+内部 WikiSQL fixed probe 结果如下。该评测是内部固定执行探针，不是官方 WikiSQL benchmark。
+
+| Model | SQL extraction | Execution rate | Execution accuracy | 相对 Phase5 | 相对 Phase6 |
+|---|---:|---:|---:|---:|---:|
+| Phase5 SFT baseline | 100.00% | 79.30% | 55.47% | 0.00 pp | +3.91 pp |
+| Phase6 SQL/tool SFT | 100.00% | 73.44% | 51.56% | -3.91 pp | 0.00 pp |
+| Phase7 GRPO rank07 | 100.00% | 81.64% | 56.25% | +0.78 pp | +4.69 pp |
+| Phase7 GRPO rank03 | 100.00% | 81.64% | 57.03% | +1.56 pp | +5.47 pp |
+| Phase7 GRPO rank11 | 100.00% | 81.64% | 56.25% | +0.78 pp | +4.69 pp |
+| Phase7 GRPO rank15 | 100.00% | 81.64% | 56.25% | +0.78 pp | +4.69 pp |
+
+结论：
+
+- SQL execution reward 有正收益，但幅度较小，最佳 rank03 相对 Phase5 提升 `+1.56 pp`。
+- 收益主要来自 execution rate 提升，而不是 SQL exact match 的显著提升。
+- Phase6 的 SQL/tool SFT 在 tool-call 格式上更有价值，但在这个 WikiSQL 执行探针上低于 Phase5，说明 SQL 数据和 tool-call 数据不能简单相加，需要重新设计 mixture、loss weight 和训练顺序。
+- Phase7 只能作为 reward 有效性的证据，不能作为最终模型，因为它不是同步训练出的单一 adapter。
+
+### Phase8：同步 16 PPU GRPO
+
+目标：将 Phase7 的独立 adapter 方案升级为真正同步 16 卡 GRPO，得到单个共享 LoRA adapter。
+
+当前方案：
+
+- 入口脚本：`scripts/remote/run_swift_wikisql_grpo_ppu16.sh`
+- 当前 run：`runs/phase8_swift_wikisql_grpo_sync16_20260629_171307`
+- 日志：`logs/phase8_swift_wikisql_grpo_sync16_20260629_171307.log`
+- 框架：`ms-swift rlhf --rlhf_type grpo`
+- 分布式：`torch.distributed.run --nproc_per_node 16` + DeepSpeed ZeRO-1
+- Adapter：LoRA rank 16 / alpha 32 / dropout 0.05
+- LR：`2e-7`
+- 训练步数：2000
+- 每 prompt 采样数：4
+- Reward：`scripts/remote/swift_wikisql_reward_plugin.py`
+- 数据：`datasets/processed/phase8_swift_wikisql_grpo_20260629/train.jsonl`
+
+截至当前同步记录时，训练仍在进行，尚未产出最终评测结论。中间状态：
+
+| Step | Reward mean | Reward std | Grad norm | KL | Memory | 备注 |
+|---:|---:|---:|---:|---:|---:|---|
+| 15/2000 | 0.7406 | 0.0438 | 0.0931 | 0.0000599 | 35.78 GiB | 首次稳定检查 |
+| 111/2000 | 0.6594 | 0.0687 | 0.0759 | -0.0000122 | 35.85 GiB | 训练正常运行 |
+
+阶段性判断：
+
+- 同步 16 卡链路已跑通，当前不是 Phase7 的独立 adapter 模式。
+- reward 波动较大是 GRPO + execution reward 的正常现象，不能按 SFT loss 曲线理解；更关键的是最终固定评测集上的 execution accuracy。
+- KL 维持在很小量级，clip ratio 基本为 0，说明当前 LR 较保守，不像在发生策略崩坏。
+- 大量 `triton.language.target_info` 日志来自 vLLM/Triton kernel 兼容警告，目前未阻断训练。
+
+启动过程中踩坑及处理：
+
+| 问题 | 表现 | 处理 |
+|---|---|---|
+| `verl==0.8.0` isolated install 不可用 | 安装后 import `verl` 失败，且依赖树会引入不匹配 Torch/Transformers | 放弃当前环境直接使用 verl，改用已有 PPU 可用的 ms-swift |
+| 非交互 SSH 下 `/etc/profile` 早退 | launcher 产生空日志 | 启动脚本改为不依赖 profile，并固定 `/opt/ac2/bin/swift` |
+| 缺少 `libhggcrt1.so` | PPU runtime loader 报错 | 显式加入 `/usr/local/PPU_SDK/targets/x86_64-linux/lib` |
+| 缺少 `libcuda.so` | external provider / NCCL 初始化失败 | 显式加入 PPU `CUDA_SDK` lib 路径 |
+| 缺少 `PPU_SDK` / `PPU_HOME` | RTC kernel 报 `Both PPU_SDK and PPU_HOME are not exist` | 显式导出 `PPU_SDK=/usr/local/PPU_SDK` 和 `PPU_HOME=/usr/local/PPU_SDK` |
+| SwanLab 未配置 | cloud 模式缺 API key，local 模式缺 `swanboard` | 本轮使用 TensorBoard 和完整 `logging.jsonl`，待配置后恢复 SwanLab |
+
+下一步：
+
+1. 等 Phase8 训练完成并确认 checkpoint。
+2. 合并 adapter。
+3. 用 Phase5/Phase6/Phase7 同口径内部 WikiSQL execution probe 评测。
+4. 同步补跑 tool-call probe，防止 SQL GRPO 损伤工具调用能力。
+5. 若 Phase8 相对 Phase7 没有提升，优先检查 reward 稀疏性、训练集与评测集分布、采样温度、`num_generations` 和 LR，而不是直接加大训练步数。
