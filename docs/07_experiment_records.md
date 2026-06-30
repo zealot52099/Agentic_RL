@@ -578,3 +578,64 @@ Expected evaluation after completion:
 | General retention | GSM8K fixed 256 subset | internal subset |
 
 Target: exceed Phase9 SQL `55.86%`, ideally approach Phase8 `62.11%`, while keeping Phase6/Phase9 tool action exact around `95%`.
+
+## 2026-06-30: Phase15 Data Agent Multi-Turn Data/Eval And 7B Continuation
+
+Goal: move beyond single-turn SQL/tool-call probes and build an executable multi-turn Data Agent training/evaluation layer. This phase focuses on schema inspection, SQL generation, SQL execution, error recovery, clarification, unsafe-operation refusal, and final answer generation.
+
+Remote assets:
+
+```text
+Job: bifrost-2026060214414601-yans2
+Project: /workspace/yans2@xiaopeng.com/agentic_rl_pipeline
+Data prep: scripts/remote/prepare_data_agent_multiturn.py
+Multi-turn eval: scripts/remote/evaluate_data_agent_multiturn.py
+7B continuation queue: scripts/remote/run_phase15_multiturn_7b_queue.sh
+14B baseline eval entry: scripts/remote/run_14b_baseline_eval.sh
+Data dir: datasets/processed/phase15_data_agent_multiturn_20260630
+```
+
+Generated data:
+
+| Split/file | Count | Purpose |
+|---|---:|---|
+| `train_traces.jsonl` | 2400 | Full executable multi-turn training traces |
+| `train_sft.jsonl` | 7084 | One assistant turn per SFT row, existing `prompt/completion/loss_weight` format |
+| `train_rl.jsonl` | 2400 | Full trace packed into `query/solution/task_type=data_agent_multiturn` for later environment-style RL |
+| `eval_traces.jsonl` | 360 | Held-out executable internal multi-turn probe |
+| `validation_sft.jsonl` | 1062 | Fixed multi-turn validation turns |
+
+Scenario mix:
+
+| Scenario | Train traces |
+|---|---:|
+| top region revenue | 360 |
+| top product units | 480 |
+| average high-priority ticket resolution | 360 |
+| join customer segment and revenue | 480 |
+| SQL error repair | 240 |
+| metric clarification | 240 |
+| unsafe destructive request refusal | 240 |
+
+Important evaluation label: this is an internal executable Data Agent probe, not an official benchmark. It complements, but does not replace, BFCL/Spider/BIRD/tau2-bench/AppWorld style public evaluations.
+
+Phase15 queue:
+
+```text
+Stamp: 20260630_142303
+PID file: runs/phase15_data_agent_multiturn_7b_20260630_142303.pid
+Outer log: logs/phase15_data_agent_multiturn_7b_20260630_142303.outer.log
+Queue log: evals/phase15_data_agent_multiturn_7b_20260630_142303/queue.log
+```
+
+The queue waits for Phase10 to finish and then starts 16-PPU LoRA SFT from the Phase10 final model. If Phase10 final export is unavailable, it falls back to the Phase9 mixed GRPO merged model. SwanLab logging is enabled locally for the Phase15 training run.
+
+14B baseline preparation:
+
+```text
+Model: /publicdata/huggingface.co/Qwen/Qwen2.5-Coder-14B-Instruct
+Status: local tokenizer/config verified
+Entry: scripts/remote/run_14b_baseline_eval.sh
+```
+
+The 14B baseline should be evaluated on the same multi-turn probe, WikiSQL internal probe, tool-call validation, and general regression set before deciding whether to migrate the main training line from 7B to 14B.
