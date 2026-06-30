@@ -182,3 +182,45 @@ Interpretation:
 Conclusion:
 
 Phase9 achieved the intended tool-retention goal but did not achieve the SQL-improvement goal. The mixed GRPO reward likely under-optimized SQL because many tool/no-tool/clarify groups already receive high or low-variance rewards, while the SQL execution signal is harder and gets diluted. The next run should keep Phase6 as the base but use a staged schedule: short SQL-only GRPO from Phase6, then a lower-LR mixed tool-retention GRPO, or increase SQL sampling ratio and use per-task reward weighting.
+
+## 2026-06-30: Phase10 Staged SQL-Then-Mixed GRPO
+
+Goal: fix the Phase9 failure mode where mixed GRPO preserved tool-call but diluted SQL execution reward. Phase10 uses a staged schedule:
+
+```text
+Phase6 merged
+  -> Phase10a SQL-only GRPO from Phase6
+  -> merge Phase10a adapter
+  -> Phase10b lower-LR mixed retention GRPO
+  -> merge final adapter
+```
+
+Remote run:
+
+```text
+Job: bifrost-2026060214414601-yans2
+Project: /workspace/yans2@xiaopeng.com/agentic_rl_pipeline
+Queue script: scripts/remote/run_phase10_staged_grpo_ppu16.sh
+Stamp: 20260630_094959
+Outer log: logs/phase10_staged_sql_then_mixed_20260630_094959.outer.log
+PID file: runs/phase10_staged_sql_then_mixed_20260630_094959.pid
+Run root: runs/phase10_staged_sql_then_mixed_20260630_094959
+Eval root: evals/phase10_staged_sql_then_mixed_20260630_094959
+```
+
+Stage design:
+
+| Stage | Base | Data | Reward | Steps | LR | Purpose |
+|---|---|---|---|---:|---:|---|
+| Phase10a | Phase6 merged | Phase8 WikiSQL executable GRPO data | `wikisql_exec` | 1500 | 2e-7 | recover SQL execution reward without tool-task dilution |
+| Phase10b | Phase10a merged | Phase9 mixed SQL/tool data | `mixed_agent_reward` | 800 | 1e-7 | retain tool-call while avoiding large SQL regression |
+
+Expected evaluation after completion:
+
+| Metric group | Dataset | Label |
+|---|---|---|
+| SQL execution | Internal rebased WikiSQL 256 probe | internal, not official WikiSQL |
+| Tool-call | `phase5_unified_20260626/validation.jsonl` | internal unified validation |
+| General retention | GSM8K fixed 256 subset | internal subset |
+
+Target: exceed Phase9 SQL `55.86%`, ideally approach Phase8 `62.11%`, while keeping Phase6/Phase9 tool action exact around `95%`.
