@@ -740,3 +740,74 @@ Mixture:
 | Phase6 SQL/tool replay | 12000 |
 
 Reasoning: the larger run should use the mixed set first, because it teaches multi-turn behavior while retaining previously strong single-turn SQL/tool-call routing. The pure multi-turn set is useful for ablation, but carries higher regression risk on Phase6-style tool-call and Spider/WikiSQL behavior.
+
+## 2026-06-30: Phase15 Data Cleaning And Dedup V4
+
+The first strict dedup pass on V2 exposed a data-quality issue: many synthetic traces were exact template duplicates. The generator was updated to add natural business-context variations, and the Phase6 replay cleaner was relaxed to validate replay JSON without forcing the Data Agent three-tool schema. V4 is the recommended cleaned dataset for the next Phase15 training run.
+
+Scripts:
+
+```text
+scripts/remote/prepare_data_agent_multiturn.py
+scripts/remote/prepare_phase15_multiturn_sft_mixture.py
+scripts/remote/clean_phase15_multiturn_data.py
+```
+
+Recommended clean output:
+
+```text
+datasets/processed/phase15_multiturn_clean_v4_20260630
+```
+
+Cleaned files:
+
+| File | Rows | Use |
+|---|---:|---|
+| `train_sft_mixture_clean.jsonl` | 31706 | Recommended next SFT training file |
+| `train_multiturn_sft_clean.jsonl` | 26223 | Multi-turn-only ablation |
+| `train_traces_clean.jsonl` | 10000 | Full train traces |
+| `train_rl_clean.jsonl` | 10000 | Future multi-turn RL data |
+| `eval_traces_clean.jsonl` | 2000 | Main internal multi-turn eval |
+| `validation_sft_clean.jsonl` | 5241 | Validation-loss checks |
+
+Cleaning operations:
+
+- Normalize newlines and JSON completions.
+- Canonicalize JSON completions with sorted keys.
+- Validate Data Agent actions: `tool_call`, `clarify`, `refuse`, `final`.
+- Validate Data Agent tools: `list_tables`, `describe_table`, `run_sql`.
+- Enforce read-only SQL for normal traces.
+- Deduplicate SFT rows by `prompt + completion`.
+- Deduplicate traces/RL rows by `user + gold_actions + scenario`.
+- Keep Phase15 train/eval split separated.
+- Keep Phase6 SQL/tool replay as broad JSON replay rather than forcing the three-tool Data Agent schema.
+
+Clean retention:
+
+| Group | Input | Kept | Notes |
+|---|---:|---:|---|
+| Multi-turn SFT | 26223 | 26223 | No duplicates after V4 generator fix |
+| Train traces | 10000 | 10000 | All executable/valid |
+| Train RL | 10000 | 10000 | Full trace RL rows retained |
+| Eval traces | 2000 | 2000 | Main held-out internal eval |
+| Validation SFT | 5241 | 5241 | Validation rows retained |
+| Mixed SFT | 38223 | 31706 | Exact duplicates removed after mixing replay |
+
+Scenario coverage after cleaning:
+
+| Scenario | Train traces | Eval traces |
+|---|---:|---:|
+| clarification / ambiguous metric | 1571 | 314 |
+| unsafe sensitive export refusal | 1000 | 200 |
+| join customer segment and revenue | 858 | 172 |
+| empty-result repair | 857 | 171 |
+| region-ticket join style query | 857 | 171 |
+| top product by units | 857 | 171 |
+| month-filtered region revenue | 715 | 143 |
+| top region by revenue | 715 | 144 |
+| average high-priority ticket resolution | 714 | 142 |
+| follow-up context / changed metric | 714 | 143 |
+| unsafe destructive request refusal | 571 | 115 |
+| SQL error repair | 571 | 114 |
+
+Next training should use `train_sft_mixture_clean.jsonl` first, with `eval_traces_clean.jsonl` as the internal executable multi-turn probe. The pure multi-turn file should be reserved for ablation because it has higher regression risk on the previous single-turn SQL/tool-call metrics.
