@@ -686,3 +686,57 @@ New coverage compared with V1:
 - Sensitive export refusal in addition to destructive-write refusal.
 
 Evaluation label: this remains an internal executable multi-turn probe, not an official benchmark. It should be reported separately from BFCL, Spider/BIRD, tau2-bench, AppWorld, SWE-bench, and other public benchmarks.
+
+## 2026-06-30: Phase15 Multi-Turn Train V2 Preparation
+
+Prepared a larger Phase15 multi-turn training set for the next longer SFT run. This does not interrupt the current Phase10/Phase15 queue.
+
+Pure multi-turn train data:
+
+```text
+datasets/processed/phase15_data_agent_multiturn_train_v2_20260630
+```
+
+| File | Count | Purpose |
+|---|---:|---|
+| `train_traces.jsonl` | 10000 | Full executable multi-turn training traces |
+| `train_sft.jsonl` | 26226 | One assistant turn per SFT row |
+| `train_rl.jsonl` | 10000 | Full trace for future environment-style RL |
+| `examples.jsonl` | 8 | Human-readable audit examples |
+
+Train scenario mix:
+
+| Scenario | Trace count |
+|---|---:|
+| clarification / ambiguous metric | 1571 |
+| unsafe sensitive export refusal | 1000 |
+| join customer segment and revenue | 858 |
+| empty-result repair | 857 |
+| region-ticket join style query | 857 |
+| top product by units | 857 |
+| month-filtered region revenue | 715 |
+| top region by revenue | 715 |
+| average high-priority ticket resolution | 714 |
+| follow-up context / changed metric | 714 |
+| unsafe destructive request refusal | 571 |
+| SQL error repair | 571 |
+
+Mixed SFT data with SQL/tool replay:
+
+```text
+datasets/processed/phase15_multiturn_sft_mixture_v2_20260630
+```
+
+| File | Count | Purpose |
+|---|---:|---|
+| `train_sft.jsonl` | 38226 | Main recommended next-run SFT mixture |
+| `multiturn_only_train_sft.jsonl` | 26226 | Multi-turn-only ablation data |
+
+Mixture:
+
+| Bucket | Rows |
+|---|---:|
+| Multi-turn Data Agent SFT | 26226 |
+| Phase6 SQL/tool replay | 12000 |
+
+Reasoning: the larger run should use the mixed set first, because it teaches multi-turn behavior while retaining previously strong single-turn SQL/tool-call routing. The pure multi-turn set is useful for ablation, but carries higher regression risk on Phase6-style tool-call and Spider/WikiSQL behavior.
