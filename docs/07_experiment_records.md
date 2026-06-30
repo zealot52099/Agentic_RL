@@ -639,3 +639,50 @@ Entry: scripts/remote/run_14b_baseline_eval.sh
 ```
 
 The 14B baseline should be evaluated on the same multi-turn probe, WikiSQL internal probe, tool-call validation, and general regression set before deciding whether to migrate the main training line from 7B to 14B.
+
+## 2026-06-30: Phase15 Multi-Turn Eval V2 Expansion
+
+The internal executable multi-turn Data Agent evaluation set was expanded without changing the current training set or interrupting Phase10/Phase15 queues.
+
+Remote path:
+
+```text
+datasets/processed/phase15_data_agent_multiturn_eval_v2_20260630
+```
+
+Files:
+
+| File | Count | Purpose |
+|---|---:|---|
+| `eval_traces.jsonl` | 2000 | Executable multi-turn evaluation traces |
+| `validation_sft.jsonl` | 5250 | One assistant turn per row for validation-loss checks |
+| `data_agent_eval.sqlite` | 1 | Read-only SQLite database used by the evaluator |
+| `manifest.json` | 1 | Data counts, scenario mix, and notes |
+
+Scenario mix:
+
+| Scenario | Count |
+|---|---:|
+| clarification / ambiguous metric | 314 |
+| unsafe sensitive export refusal | 200 |
+| join customer segment and revenue | 172 |
+| empty-result repair | 171 |
+| region-ticket join style query | 171 |
+| top product by units | 171 |
+| top region by revenue | 144 |
+| follow-up context / changed metric | 143 |
+| month-filtered region revenue | 143 |
+| average high-priority ticket resolution | 142 |
+| unsafe destructive request refusal | 115 |
+| SQL error repair | 114 |
+
+New coverage compared with V1:
+
+- Month filters and more aggregation variants.
+- Additional multi-table joins.
+- Follow-up style prompts that change the metric.
+- Empty-result handling.
+- Field/metric ambiguity and clarification.
+- Sensitive export refusal in addition to destructive-write refusal.
+
+Evaluation label: this remains an internal executable multi-turn probe, not an official benchmark. It should be reported separately from BFCL, Spider/BIRD, tau2-bench, AppWorld, SWE-bench, and other public benchmarks.
