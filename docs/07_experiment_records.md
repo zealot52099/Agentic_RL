@@ -811,3 +811,97 @@ Scenario coverage after cleaning:
 | SQL error repair | 571 | 114 |
 
 Next training should use `train_sft_mixture_clean.jsonl` first, with `eval_traces_clean.jsonl` as the internal executable multi-turn probe. The pure multi-turn file should be reserved for ablation because it has higher regression risk on the previous single-turn SQL/tool-call metrics.
+
+## 2026-07-01: Text-to-SQL Execution Accuracy Literature Notes
+
+Problem observed in our experiments: SQL execution accuracy has not improved reliably. Phase8 SQL-only GRPO improved the internal WikiSQL probe, but Phase9/Phase10 mixed SQL+tool training stayed around the mid-50% execution-accuracy range on the internal 256-row WikiSQL probe. This suggests that simple SFT/GRPO over final SQL strings is insufficient; the model needs better schema grounding, value grounding, correction data, and candidate selection.
+
+Current internal snapshot:
+
+| Model | SQL extraction | SQL execution rate | SQL execution accuracy | Notes |
+|---|---:|---:|---:|---|
+| Phase8 SQL-only GRPO from Phase5 | 100% | 88.67% | 62.11% | Best SQL-only result so far |
+| Phase9 mixed GRPO from Phase6 | 100% | 80.08% | 55.86% | Preserved tool-call but diluted SQL reward |
+| Phase10 staged SQL->mixed GRPO | 100% | 79.69% | 55.86% | Mixed retention erased most SQL-only gain |
+
+Key lessons from recent Text-to-SQL work:
+
+1. **Candidate generation + selection is stronger than one-shot generation.**
+   - CHASE-SQL uses multiple generation paths, including divide-and-conquer, execution-plan-style reasoning, and instance-aware synthetic examples, then uses a preference-optimized selector to choose among candidates.
+   - Reported BIRD execution accuracy is about 73% on both dev/test in the paper.
+   - Takeaway for us: GRPO should not only optimize a single sampled SQL. We should train and evaluate with `k` candidates, execution results, and a selector/reranker reward.
+
+2. **Execution feedback is most useful when attached to reasoning/correction, not just final SQL reward.**
+   - ExCoT-DPO reports that zero-shot CoT alone gives little benefit, and DPO without CoT is weak; the gain comes from combining execution feedback with explicit reasoning/correction traces.
+   - The paper reports improvements on BIRD and Spider using execution accuracy as the feedback signal, without human preference labels or a learned reward model.
+   - Takeaway for us: our SQL GRPO reward is too sparse and too final-output oriented. We need traces like: draft SQL -> execution error/result -> diagnose schema/value/join issue -> corrected SQL.
+
+3. **Schema retrieval/linking should be model- and context-dependent.**
+   - LitE-SQL combines vector-based schema retrieval with a two-stage generator: SFT followed by execution-guided reinforcement/self-correction. It reports strong BIRD/Spider execution accuracy with lightweight models.
+   - Another analysis argues that schema linking is less important when the full schema fits and the base model is strong, but still helps weaker models or large schemas; augmentation, example selection, and correction consistently help.
+   - Takeaway for us: for WikiSQL-style tiny schemas, schema linking is not the bottleneck; for Data Agent/Spider/BIRD-style multi-table schemas, we need schema/value retrieval and compact schema serialization.
+
+4. **Example selection and prompt organization matter.**
+   - DAIL-SQL shows that SQL-oriented schema representation, example selection, and example organization can produce large Spider gains; self-consistency adds a smaller extra gain but is expensive.
+   - Takeaway for us: training data should include prompt formats that match inference: schema serialized as SQL DDL or compact table/column docs, plus structurally similar demonstrations for difficult SQL types.
+
+5. **Dataset correctness is a major bottleneck.**
+   - SQLDriller reports a non-trivial portion of Spider/BIRD mappings can be wrong and proposes execution consistency with counterexample databases to detect/fix labels. It reports accuracy improvements up to 13.6% after data correction.
+   - Takeaway for us: before adding more Spider/BIRD-style data, run label validation: execute gold SQL, compare result semantics, detect ambiguous/incorrect samples, and remove/fix noisy rows.
+
+6. **Benchmark execution accuracy can be misleading without reliability checks.**
+   - Work such as RTS++ introduces execution-result clustering/entropy to estimate uncertainty across candidates.
+   - Takeaway for us: report not just execution accuracy, but also candidate agreement, execution entropy, empty-result rate, and abstain/clarify behavior.
+
+Recommended next SQL improvement plan:
+
+| Priority | Change | Concrete implementation |
+|---|---|---|
+| P0 | Build SQL error taxonomy | From predictions, bucket failures into parse error, execution error, wrong column/table, wrong aggregation, wrong filter value, wrong join, empty-result false positive, order/limit error |
+| P0 | Add execution-repair SFT | Generate traces: question+schema -> draft SQL -> sqlite error/result mismatch -> corrected SQL; train assistant turns for correction |
+| P0 | Validate SQL training labels | For WikiSQL/Spider/SQL-Create-Context, execute gold SQL where DB exists; remove or mark ambiguous/incorrect rows |
+| P1 | Use multi-candidate SQL GRPO | For each prompt sample 4-8 SQLs, reward exact execution result, penalize invalid/unsafe SQL, and train selector/reranker pairs |
+| P1 | Add value grounding | Retrieve candidate cell values with exact/fuzzy match; include top values in prompt/training context |
+| P1 | Add schema compacting | Serialize schema as DDL plus column comments/types/sample values; for multi-table tasks expose only relevant tables plus distractors |
+| P1 | Balance SQL/tool retention | Keep SQL-only reward stage longer; in mixed stage use higher SQL proportion or freeze SQL-sensitive adapter with separate tool-retention adapter |
+| P2 | Preference optimization | Build pairs: correct SQL vs executable-wrong SQL, correct join vs cartesian/wrong join, clarify vs guessing missing metric |
+| P2 | Reliability scoring | At eval time sample multiple SQLs; report majority-result accuracy, execution entropy, abstain threshold, and cost |
+
+Recommended Phase16 experiment:
+
+```text
+Base: Phase10 final or Phase8 SQL-best, depending on target.
+Data:
+  40% SQL execution-repair traces
+  25% Spider/BIRD-style multi-table SQL after label validation
+  15% WikiSQL/SQL-Create-Context simple SQL replay
+  10% Data Agent schema->SQL->execute multi-turn traces
+  10% tool-call/general replay
+Training:
+  1. SFT on repair + schema/value-grounded SQL traces.
+  2. DPO/SimPO on candidate pairs selected by execution result.
+  3. SQL-only GRPO with multi-candidate execution reward.
+  4. Short tool-retention SFT/GRPO.
+Evaluation:
+  WikiSQL internal 256 probe, Spider execution/test-suite if available, BIRD subset if available,
+  internal multi-turn SQL repair probe, tool-call validation, GSM8K/MMLU-Pro regression.
+```
+
+Immediate action items:
+
+1. Do not treat normalized SQL exact as the target; continue optimizing execution result correctness.
+2. Build `evaluate_sql_failure_modes.py` to analyze Phase10 predictions and create a failure distribution.
+3. Create `prepare_sql_repair_sft.py` from failed predictions plus gold result/error feedback.
+4. Add value retrieval into prompts for datasets where question values may not exactly match table cells.
+5. For the next longer run, use cleaned Phase15 v4 data for multi-turn behavior, but isolate SQL repair as its own stage rather than mixing it too early with tool-call retention.
+
+References:
+
+- [CHASE-SQL: Multi-Path Reasoning and Preference Optimized Candidate Selection in Text-to-SQL](https://openreview.net/forum?id=CvGqMD5OtX), arXiv:2410.01943.
+- [DAIL-SQL / Text-to-SQL Empowered by Large Language Models](https://arxiv.org/abs/2308.15363), PVLDB 2024.
+- [DIN-SQL: Decomposed In-Context Learning of Text-to-SQL with Self-Correction](https://arxiv.org/abs/2304.11015).
+- [Optimizing Reasoning for Text-to-SQL with Execution Feedback](https://arxiv.org/abs/2503.19988), ACL Findings 2025.
+- [MAC-SQL: A Multi-Agent Collaborative Framework for Text-to-SQL](https://arxiv.org/html/2312.11242v2).
+- LitE-SQL: Vector-based Schema Linking and Execution-Guided Self-Correction.
+- The Death of Schema Linking? Text-to-SQL in the Age of Well-Reasoned Language Models.
+- SQLDriller: Automated Validating and Fixing of Text-to-SQL Translation with Execution Consistency.
