@@ -95,6 +95,23 @@ main() {
       --dataset "$FOLLOW/sql_repair_eval.jsonl" \
       --output-dir "$EVAL_ROOT/sql_repair"
 
+  mkdir -p "$FOLLOW/sql_repair_execution_eval"
+  run_eval prepare_sql_repair_execution_phase16a \
+    /opt/ac2/bin/python scripts/remote/prepare_sql_repair_execution_eval.py \
+      --wikisql-eval "$FOLLOW/wikisql_eval_256.jsonl" \
+      --database "$FOLLOW/wikisql_eval_256.sqlite" \
+      --output "$FOLLOW/sql_repair_execution_eval/sql_repair_execution_eval_128.jsonl" \
+      --manifest "$FOLLOW/sql_repair_execution_eval/manifest.json" \
+      --limit 128
+
+  run_eval sql_repair_execution_phase16a \
+    /opt/ac2/bin/python scripts/remote/evaluate_sql_repair_execution.py \
+      --model "$MERGED" \
+      --model-label phase16a_sql_repair_sft \
+      --dataset "$FOLLOW/sql_repair_execution_eval/sql_repair_execution_eval_128.jsonl" \
+      --database "$FOLLOW/wikisql_eval_256.sqlite" \
+      --output-dir "$EVAL_ROOT/sql_repair_execution"
+
   run_eval multiturn_phase16a \
     /opt/ac2/bin/python scripts/remote/evaluate_data_agent_multiturn.py \
       --model "$MERGED" \

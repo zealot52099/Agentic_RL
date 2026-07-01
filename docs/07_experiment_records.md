@@ -1102,3 +1102,79 @@ Phase16a SFT adapter
   -> short tool/multi-turn retention if tool metrics regress
   -> unified evaluation using the fixed assets above
 ```
+
+## 2026-07-01: Phase16a SQL Repair Evaluation Fix
+
+After Phase16a finished, the original held-out SQL repair probe reported `normalized_repair_exact = 0.00%`. This turned out to be primarily an evaluation-design issue, not enough evidence that the model has no SQL repair ability.
+
+Old repair probe:
+
+| Field | Value |
+|---|---|
+| Script | `scripts/remote/evaluate_sql_repair_probe.py` |
+| Dataset | `datasets/processed/phase16_followup_assets_20260701/sql_repair_eval.jsonl` |
+| Samples | 64 |
+| Metric | normalized SQL string exact |
+| Phase16a result | `0.00%` |
+
+Why the old metric is misleading:
+
+1. The prompt contains question, previous SQL, feedback, expected result, and gold SQL target, but does not include the full table schema or executable table payload.
+2. The metric is strict normalized SQL exact. Execution-equivalent SQL is still counted as wrong.
+3. Many examples are real Phase10 failures where the previous SQL itself contains wrong or truncated column/value assumptions, so the model must infer schema details that are absent from the prompt.
+4. The intended downstream behavior is execution correctness, not string identity.
+
+The evaluation scheme was updated with an executable repair probe:
+
+| Field | Value |
+|---|---|
+| Preparation script | `scripts/remote/prepare_sql_repair_execution_eval.py` |
+| Evaluation script | `scripts/remote/evaluate_sql_repair_execution.py` |
+| Eval data | `datasets/processed/phase16_followup_assets_20260701/sql_repair_execution_eval/sql_repair_execution_eval_128.jsonl` |
+| Database | `datasets/processed/phase16_followup_assets_20260701/wikisql_eval_256.sqlite` |
+| Samples | 128 |
+| Source | fixed WikiSQL internal execution probe |
+| Prompt | full schema, sample rows, previous corrupted SQL, execution feedback, expected result |
+| Main metric | repaired SQL execution result exact match |
+
+Phase16a results on the new executable repair probe:
+
+| Metric | Value |
+|---|---:|
+| SQL extraction rate | `100.00%` |
+| Execution rate | `99.22%` |
+| Execution repair accuracy | `81.25%` |
+| Normalized SQL exact | `28.12%` |
+| Previous SQL execution accuracy baseline | `0.00%` |
+
+Breakdown by synthetic failure type:
+
+| Failure type | Samples | Execution repair accuracy |
+|---|---:|---:|
+| `remove_where_clause` | 116 | `82.76%` |
+| `avg_to_count` | 4 | `75.00%` |
+| `sum_to_count` | 6 | `50.00%` |
+| `max_to_min` | 2 | `100.00%` |
+
+Interpretation:
+
+1. The `0.00%` old repair exact score should not be used as the headline repair metric.
+2. Phase16a can repair many SQL mistakes when schema/table context is present and scoring is execution-based.
+3. Normalized SQL exact remains useful only as a conservative diagnostic for exact gold-form reproduction.
+4. Future SQL repair reporting should prioritize `execution_repair_accuracy`, `execution_rate`, and error-type breakdown.
+5. Training should not immediately pivot solely because of the old repair exact score. The next training decision should use WikiSQL execution accuracy, executable repair accuracy, and Data Agent multi-turn/tool metrics together.
+
+Implementation update:
+
+```text
+scripts/remote/run_phase16a_post_eval_queue.sh
+  -> evaluate_sql_repair_probe.py                 # legacy exact diagnostic
+  -> prepare_sql_repair_execution_eval.py         # executable repair eval construction
+  -> evaluate_sql_repair_execution.py             # execution-based repair scoring
+```
+
+Recommended next action:
+
+1. Keep the new executable repair probe in all later SQL experiments.
+2. If WikiSQL execution accuracy remains below the Phase8 SQL-only peak, run Phase16b DPO followed by Phase16c SQL execution GRPO from the Phase16a adapter.
+3. If Data Agent multi-turn or tool metrics regress, add a short retention stage with Phase15 clean multi-turn/tool replay before further SQL-only optimization.
