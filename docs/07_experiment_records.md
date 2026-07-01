@@ -987,3 +987,53 @@ Recommended next training order:
 3. Phase16c SQL-only GRPO on `train_sql_grpo.jsonl`.
 4. Short tool/multi-turn retention stage using Phase15 clean v4 replay.
 5. Evaluate WikiSQL execution accuracy, repair probe accuracy, tool-call metrics, multi-turn Data Agent probe, GSM8K, MMLU-Pro, and IFEval.
+
+## 2026-07-01: Phase16a SQL Repair SFT Launch
+
+Phase16a has started on `bifrost-2026060214414601-yans2` after stopping the previous `run_gpu_16.sh` resource placeholder.
+
+Run script:
+
+```text
+scripts/remote/run_phase16a_sql_repair_sft_ppu16.sh
+```
+
+Remote run directory:
+
+```text
+runs/phase16a_sql_repair_sft_20260701_1138_phase16a/phase16a_sql_repair_sft_7b_lora_20260701_1138_phase16a
+```
+
+Remote eval/manifest directory:
+
+```text
+evals/phase16a_sql_repair_sft_20260701_1138_phase16a
+```
+
+Training setup:
+
+| Field | Value |
+|---|---|
+| Base model | `evals/phase10_staged_sql_then_mixed_20260630_094959/merged/phase10b_mixed_retention_step0800` |
+| Train data | `datasets/processed/phase16_sql_repair_20260701/train_sql_mixture_sft.jsonl` |
+| Rows | 12133 |
+| Method | 16-card DDP LoRA SFT |
+| Steps | 1000 |
+| Sequence length | 4096 |
+| Global batch | 32 samples/step |
+| LR | `4e-7`, cosine schedule |
+| Warmup | 60 steps |
+| LoRA | rank 32, alpha 64, dropout 0.05 |
+| Max grad norm | 0.5 |
+| Logging | `train_metrics.jsonl`, `train.log`, SwanLab local mode |
+
+Initial health check:
+
+| Step | loss | loss_ema | grad_norm | clip rate | LR | Tokens/s | Max memory |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 0.4799 | 0.4799 | 0.5673 | 1.00 | `1.33e-8` | 67.4 | 15.80 GiB |
+| 5 | 0.4825 | 0.4803 | 0.4912 | 0.25 | `4.00e-8` | 153.5 | 16.89 GiB |
+| 10 | 0.5503 | 0.4963 | 0.6034 | 1.00 | `7.33e-8` | 181.4 | 16.89 GiB |
+| 15 | 0.5975 | 0.5219 | 0.5935 | 0.80 | `1.07e-7` | 194.8 | 16.89 GiB |
+
+Interpretation: training has passed model loading and first optimization steps. Early clipping is elevated during warmup but gradients are finite and memory is stable. Continue monitoring for NaN/OOM/PCCL timeout and check whether loss stabilizes after warmup.
