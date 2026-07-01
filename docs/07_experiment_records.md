@@ -1037,3 +1037,68 @@ Initial health check:
 | 15 | 0.5975 | 0.5219 | 0.5935 | 0.80 | `1.07e-7` | 194.8 | 16.89 GiB |
 
 Interpretation: training has passed model loading and first optimization steps. Early clipping is elevated during warmup but gradients are finite and memory is stable. Continue monitoring for NaN/OOM/PCCL timeout and check whether loss stabilizes after warmup.
+
+## 2026-07-01: Phase16 Follow-up Training and Evaluation Assets
+
+While Phase16a is running, the follow-up data and evaluation assets were prepared without interrupting the training process.
+
+Preparation script:
+
+```text
+scripts/remote/prepare_phase16_followup_assets.py
+```
+
+Remote output directory:
+
+```text
+datasets/processed/phase16_followup_assets_20260701
+```
+
+Purpose: make Phase16b/Phase16c and post-training evaluation reproducible by pinning all train/eval paths in one manifest.
+
+Generated training assets:
+
+| Asset | Rows | Purpose |
+|---|---:|---|
+| `phase16b_dpo_train.jsonl` | 4967 | DPO/SimPO training pairs: gold SQL vs wrong SQL |
+| `phase16b_dpo_eval_holdout.jsonl` | 256 | Held-out preference pairs; do not train on these |
+| `phase16c_grpo_train.jsonl` | 4088 | Executable WikiSQL GRPO training data |
+| `phase16c_grpo_smoke_256.jsonl` | 256 | Small GRPO smoke/debug subset |
+
+Generated evaluation assets:
+
+| Asset | Rows | Purpose |
+|---|---:|---|
+| `wikisql_eval_256.jsonl` + `wikisql_eval_256.sqlite` | 256 | Internal fixed WikiSQL execution probe |
+| `sql_repair_eval.jsonl` | 64 | Held-out real Phase10 SQL failure repair probe |
+| `data_agent_multiturn_eval_500.jsonl` + `data_agent_eval.sqlite` | 500 | Internal executable multi-turn Data Agent probe |
+| `data_agent_tool_action_probe.jsonl` | 307 | Internal Data Agent JSON action/tool-call probe |
+| `mcp_xlam_array_tool_probe.jsonl` | 5 | MCP array-format smoke probe only; too small for main reporting |
+
+Public/general evaluation data availability:
+
+| Dataset | Remote path | Status |
+|---|---|---|
+| GSM8K | `datasets/eval_suite/huggingface/openai__gsm8k/main/test-00000-of-00001.parquet` | available |
+| MMLU-Pro | `datasets/eval_suite/huggingface/TIGER-Lab__MMLU-Pro/data/test-00000-of-00001.parquet` | available |
+| IFEval | `datasets/eval_suite/huggingface/google__IFEval/ifeval_input_data.jsonl` | available |
+| BFCL V3 files | `datasets/eval_suite/huggingface/gorilla-llm__Berkeley-Function-Calling-Leaderboard` | available |
+
+Important notes:
+
+1. `phase16b_dpo_eval_holdout.jsonl` is split before DPO and must remain held out.
+2. Spider DB files are still absent, so Spider remains SFT-only; it is not yet suitable for execution-reward RL or official Spider execution evaluation.
+3. BFCL files are present, but the current repo has only internal/xLAM-style evaluation. For SOTA alignment, official BFCL scoring still needs to be integrated.
+4. `mcp_xlam_array_tool_probe.jsonl` has only 5 unique prompts after deduplication, so it should be treated as a smoke test, not a headline metric.
+5. The main post-Phase16 report should prioritize: WikiSQL execution accuracy, SQL repair probe accuracy, Data Agent multi-turn success, Data Agent JSON action probe, GSM8K, MMLU-Pro, IFEval, and then BFCL once the official scorer is wired in.
+
+Recommended follow-up execution:
+
+```text
+Phase16a SFT adapter
+  -> merge adapter onto Phase10b base
+  -> Phase16b DPO/SimPO using phase16b_dpo_train.jsonl
+  -> Phase16c SQL-only GRPO using phase16c_grpo_train.jsonl
+  -> short tool/multi-turn retention if tool metrics regress
+  -> unified evaluation using the fixed assets above
+```
