@@ -1178,3 +1178,59 @@ Recommended next action:
 1. Keep the new executable repair probe in all later SQL experiments.
 2. If WikiSQL execution accuracy remains below the Phase8 SQL-only peak, run Phase16b DPO followed by Phase16c SQL execution GRPO from the Phase16a adapter.
 3. If Data Agent multi-turn or tool metrics regress, add a short retention stage with Phase15 clean multi-turn/tool replay before further SQL-only optimization.
+
+## 2026-07-01: Phase16c SQL Execution GRPO Launch Plan
+
+Decision: start the necessary follow-up training with Phase16c SQL execution GRPO from the Phase16a merged model.
+
+Why Phase16c before Phase16b DPO:
+
+1. The headline SQL issue is still end-to-end WikiSQL execution accuracy, not repair string exact.
+2. The newly fixed executable repair probe shows Phase16a already has repair ability when schema/table context is present.
+3. Historical Coder7B DPO runs showed real risk of over-specialization and tool/function-call regression when preference data is narrow or format-skewed.
+4. GRPO uses execution reward directly and is the cleaner next step for improving SQL execution result correctness.
+
+Launch script:
+
+```text
+scripts/remote/run_phase16c_sql_grpo_ppu16.sh
+```
+
+Remote run naming:
+
+```text
+runs/phase16c_sql_execution_grpo_<stamp>
+evals/phase16c_sql_execution_grpo_<stamp>
+```
+
+Training setup:
+
+| Field | Value |
+|---|---|
+| Base model | `evals/phase16a_sql_repair_sft_20260701_1138_phase16a/merged/phase16a_sql_repair_sft_merged` |
+| Train data | `datasets/processed/phase16_followup_assets_20260701/phase16c_grpo_train.jsonl` |
+| Method | ms-swift GRPO, synchronized 16 PPU, LoRA |
+| Reward | `wikisql_exec`, read-only SQLite execution reward |
+| Steps | `1200` default |
+| LR | `1.5e-7` default |
+| LoRA | rank 16, alpha 32, dropout 0.05 |
+| Generations | 4 per prompt |
+| Logging | SwanLab local mode plus full train log |
+
+Automatic post-eval after training:
+
+| Eval | Path |
+|---|---|
+| WikiSQL internal execution probe | `evals/<run>/wikisql` |
+| Executable SQL repair probe | `evals/<run>/sql_repair_execution` |
+| Data Agent multi-turn probe | `evals/<run>/data_agent_multiturn` |
+| GSM8K/MMLU-Pro fixed public subsets | `evals/<run>/general` |
+
+Success criteria:
+
+1. WikiSQL execution accuracy should exceed Phase16a `59.38%` and ideally approach or exceed Phase8 SQL-only `62.11%`.
+2. Executable SQL repair accuracy should not materially regress from Phase16a `81.25%`.
+3. Data Agent multi-turn task success should not collapse; if it regresses, run a short Phase15 clean multi-turn/tool retention stage.
+4. GSM8K and MMLU-Pro fixed-subset regression should remain within roughly 2 pp where possible.
+
+Phase16b DPO remains queued as a targeted follow-up only if Phase16c improves SQL execution but still shows systematic failure types where chosen-vs-rejected preference pairs are clearly aligned.
