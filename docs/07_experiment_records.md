@@ -905,3 +905,85 @@ References:
 - LitE-SQL: Vector-based Schema Linking and Execution-Guided Self-Correction.
 - The Death of Schema Linking? Text-to-SQL in the Age of Well-Reasoned Language Models.
 - SQLDriller: Automated Validating and Fixing of Text-to-SQL Translation with Execution Consistency.
+
+## 2026-07-01: Phase16 SQL Repair Data Preparation
+
+Goal: prepare the next SQL-focused experiment from the Text-to-SQL literature plan above. The data is designed to improve execution accuracy through repair traces, executable WikiSQL GRPO prompts, preference pairs, and a small amount of tool/multi-turn replay.
+
+Remote project:
+
+```text
+/workspace/yans2@xiaopeng.com/agentic_rl_pipeline
+```
+
+Preparation script:
+
+```text
+scripts/remote/prepare_phase16_sql_repair_data.py
+```
+
+Output directory:
+
+```text
+datasets/processed/phase16_sql_repair_20260701
+```
+
+Input assets:
+
+| Input | Role |
+|---|---|
+| `evals/phase10_phase15_post_eval_20260701_102944/wikisql_phase10/phase10b_mixed_retention_step0800_predictions.jsonl` | Real Phase10 WikiSQL failures for taxonomy, repair SFT, and DPO |
+| `datasets/processed/phase8_swift_wikisql_grpo_20260629/train.jsonl` | Executable WikiSQL table payloads for GRPO and synthetic SQL repair |
+| `datasets/modelscope/spider_train.jsonl` / `spider_val.jsonl` | Spider SFT-only SQL data; DB files are not present in this snapshot, so not used for RL reward |
+| `datasets/modelscope/sql_create_context.jsonl` | Schema-grounded SQL SFT rows |
+| `datasets/processed/phase15_multiturn_clean_v4_20260630/train_sft_mixture_clean.jsonl` | Tool-call and Data Agent multi-turn replay |
+
+Phase10 WikiSQL failure taxonomy:
+
+| Failure type | Count | Meaning |
+|---|---:|---|
+| `wrong_column_or_unquoted_display_name` | 48 | Model often used display names such as `Pre-Season` instead of actual SQLite `colN` columns |
+| `wrong_aggregation_or_selection` | 48 | Executable SQL but wrong aggregation/selected column |
+| `wrong_filter_or_value` | 13 | Wrong filter value or condition |
+| `execution_error_other` | 2 | Other execution failures |
+| `sql_syntax_error` | 2 | SQL syntax errors |
+| `correct_execution` | 143 | Correct predictions, excluded from repair training |
+
+Generated files:
+
+| File | Rows | Purpose |
+|---|---:|---|
+| `train_sql_repair_sft.jsonl` | 4137 | Real Phase10 failures plus synthetic WikiSQL corruption repair traces |
+| `eval_sql_repair_probe.jsonl` | 64 | Held-out real Phase10 failure repair probe |
+| `train_sql_dpo_pairs.jsonl` | 5223 | Chosen gold SQL vs real/synthetic wrong SQL |
+| `train_sql_grpo.jsonl` | 4088 | Executable WikiSQL prompts with table payload and gold result for SQL GRPO |
+| `train_sql_mixture_sft.jsonl` | 12133 | Repair SFT + Spider/SQL-context SFT + Data Agent/tool replay |
+| `failure_taxonomy.jsonl` | 113 | Real failed Phase10 predictions with error buckets |
+| `manifest.json` / `failure_report.json` / `examples.json` | - | Reproducibility, counts, and sample inspection |
+
+Validation results:
+
+| File | JSON valid | Duplicate keys |
+|---|---:|---:|
+| `train_sql_repair_sft.jsonl` | 4137/4137 | 0 |
+| `eval_sql_repair_probe.jsonl` | 64/64 | 0 |
+| `train_sql_dpo_pairs.jsonl` | 5223/5223 | 0 |
+| `train_sql_grpo.jsonl` | 4088/4088 | 0 |
+| `train_sql_mixture_sft.jsonl` | 12133/12133 | 0 |
+| `failure_taxonomy.jsonl` | 113/113 | 0 |
+
+Important implementation details:
+
+1. WikiSQL examples are executable and can be used for GRPO reward.
+2. Spider rows are SFT-only for now because the current remote snapshot does not contain Spider database files.
+3. Synthetic repair data is created by corrupting gold SQL with realistic mistakes: removing quotes, changing aggregation functions, and removing limits.
+4. Real Phase10 failures are held out partly as `eval_sql_repair_probe.jsonl` to check whether the model learns correction behavior rather than memorizing all failures.
+5. Value hints are derived from question/table-cell overlap and stored as retrieval features, not as ground-truth labels.
+
+Recommended next training order:
+
+1. Phase16a SFT on `train_sql_mixture_sft.jsonl`, with higher weight on `phase10_wikisql_failed_prediction` and `wikisql_synthetic_sql_repair`.
+2. Phase16b DPO/SimPO on `train_sql_dpo_pairs.jsonl`.
+3. Phase16c SQL-only GRPO on `train_sql_grpo.jsonl`.
+4. Short tool/multi-turn retention stage using Phase15 clean v4 replay.
+5. Evaluate WikiSQL execution accuracy, repair probe accuracy, tool-call metrics, multi-turn Data Agent probe, GSM8K, MMLU-Pro, and IFEval.
