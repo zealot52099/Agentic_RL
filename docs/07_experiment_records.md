@@ -1236,3 +1236,71 @@ Success criteria:
 4. GSM8K and MMLU-Pro fixed-subset regression should remain within roughly 2 pp where possible.
 
 Phase16b DPO remains queued as a targeted follow-up only if Phase16c improves SQL execution but still shows systematic failure types where chosen-vs-rejected preference pairs are clearly aligned.
+
+## 2026-07-02: Phase18 Canonical Data Agent SFT
+
+Goal: fix the data-format fragmentation found in the dataset registry audit. Previous SFT/RL mixtures used different prompt markers and output surfaces: `AVAILABLE FUNCTIONS`, `AVAILABLE_TOOLS`, SQL-only prompts, bare SQL completions, and Data Agent JSON actions. This can make the 7B model learn isolated behaviors rather than one robust Data Agent policy.
+
+New scripts:
+
+```text
+scripts/remote/prepare_phase18_canonical_data.py
+scripts/remote/run_phase18_canonical_sft_ppu16.sh
+```
+
+Base model:
+
+```text
+evals/phase17_sql_error_sft_20260702_123712_phase17b/merged/phase17_sql_error_sft_merged
+```
+
+Data:
+
+```text
+datasets/processed/phase18_canonical_data_agent_sft_20260702_155000_phase18
+```
+
+Data audit:
+
+| Metric | Value |
+|---|---:|
+| Total rows | 18,750 |
+| Train rows | 17,982 |
+| Validation rows | 768 |
+| Rows with `AVAILABLE_TOOLS` | 17,982 train rows |
+| Rows with old `AVAILABLE FUNCTIONS` | 0 |
+| Rows with duplicated user marker | 0 |
+| Rows retaining tool transcript | 6,438 train rows |
+| `run_sql` tool-call targets | 8,143 train calls |
+
+Major buckets:
+
+| Source | Rows after dedup |
+|---|---:|
+| canonical multi-turn | 11,925 |
+| Phase17 SQL canonicalized | 4,444 |
+| low-weight Phase5 Spider replay | 1,200 |
+| Phase5 tool replay | 705 |
+| Phase17 replay action | 476 |
+
+Training launch:
+
+| Field | Value |
+|---|---|
+| Run | `phase18_canonical_data_agent_sft_20260702_155000_phase18` |
+| Method | 16-PPU LoRA SFT |
+| Steps | 900 |
+| LR | `2.5e-7` |
+| Warmup | 60 |
+| Seq len | 4096 |
+| LoRA | rank 32, alpha 64, dropout 0.05 |
+| SwanLab | local mode, project `agentic-rl-sql-tool` |
+
+Initial health:
+
+| Step | loss | loss_ema | grad_norm | clip rate | LR | Tokens/s | Max memory |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 0.3787 | 0.3787 | 0.4913 | 0.00 | `8.33e-9` | 53.9 | 16.20 GiB |
+| 5 | 0.5542 | 0.4085 | 0.3621 | 0.75 | `2.50e-8` | 130.5 | 16.35 GiB |
+
+Interpretation: training started normally on 16 PPU after stopping `run_gpu_16.sh`. No NaN/OOM/PCCL/NCCL errors appeared in the first metrics window. The post-training queue will merge the adapter, run corrected WikiSQL v2 evaluation, and restart `run_gpu_16.sh` only if no project task is active.

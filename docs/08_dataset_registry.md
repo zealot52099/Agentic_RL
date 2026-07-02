@@ -25,6 +25,7 @@
 | `phase16_sql_repair` | SQL SFT/GRPO | SQL repair + Spider + SQL-context + replay | 训练+评测 | 2026-07-01 | repair SFT 4,137; repair eval 64; GRPO 4,088; mixture SFT 12,133; taxonomy 113 | `datasets/processed/phase16_sql_repair_20260701` | `scripts/remote/prepare_phase16_sql_repair_data.py` | Phase16a executable repair accuracy 达 81.25%；旧 normalized exact 0% 被确认为评测设计问题。WikiSQL execution 目标仍需继续优化。 |
 | `phase16_followup_assets` | SQL follow-up | Phase16b/16c train and eval assets | 训练+评测 | 2026-07-01 | DPO train 4,967; DPO holdout 256; GRPO train 4,088; smoke 256; WikiSQL eval 256; multi-turn eval 500; tool probe 307 | `datasets/processed/phase16_followup_assets_20260701` | `scripts/remote/prepare_phase16_followup_assets.py` | 固定 Phase16 后续训练/评测口径；Phase16c 使用 executable WikiSQL GRPO reward。 |
 | `phase17_sql_error_sft` | SQL error SFT | Corrected WikiSQL v2 + Phase16c 错例 SFT | 训练+评测 | 2026-07-02 | Phase17 rows 380; repeated 3,040; replay 5,000; total 8,040; eval 256 | `datasets/processed/phase17_sql_error_sft_20260702_123712_phase17b` | `scripts/remote/prepare_phase17_sql_eval_and_sft.py`; `scripts/remote/evaluate_wikisql_v2.py`; `scripts/remote/run_phase17_sql_error_sft_ppu16.sh` | 修正 WikiSQL 大小写和 prompt 字段误导问题；corrected Phase16c baseline 为 execution accuracy 50.78%、execution rate 95.31%。Phase17 训练后影响待补。 |
+| `phase18_canonical_data_agent_sft` | Canonical Data Agent SFT | SQL/tool/multi-turn 统一 action schema 重构数据 | 训练+验证 | 2026-07-02 | total 18,750; train 17,982; val 768 | `datasets/processed/phase18_canonical_data_agent_sft_20260702_155000_phase18` | `scripts/remote/prepare_phase18_canonical_data.py`; `scripts/remote/run_phase18_canonical_sft_ppu16.sh` | 统一 `AVAILABLE_TOOLS` 与 `run_sql` action，降低 SQL/tool prompt 碎片化；训练影响待 Phase18 post-eval 补。 |
 | `eval_suite_public` | 通用/官方评测 | IFEval/BFCL/SWE-bench/LiveCodeBench/HumanEval/MBPP/GSM8K/MMLU-Pro | 评测 | 2026-06-10 起 | 按各 benchmark 官方 split | `datasets/eval_suite` | `scripts/prepare_eval_suite.py` | 用于公开指标对齐和能力回归。不得训练；官方 scorer 未接入的指标只能标记为内部/待接入。 |
 | `wikisql_internal_probe` | SQL 评测 | WikiSQL internal execution probe | 评测 | 2026-06-10 起；v2 2026-07-02 | 256 | `datasets/processed/phase16_followup_assets_20260701/wikisql_eval_256.*`; Phase17 normalized variant | `scripts/remote/evaluate_wikisql.py`; `scripts/remote/evaluate_wikisql_v2.py` | Phase8 SQL-only GRPO 曾达 62.11% execution accuracy；Phase9/10 mixed 约 55.86%；Phase16c corrected v2 baseline 50.78%。内部 probe，非官方 WikiSQL benchmark。 |
 | `sql_repair_execution_eval` | SQL repair 评测 | Executable SQL repair probe | 评测 | 2026-07-01 | 128 | `datasets/processed/phase16_followup_assets_20260701/sql_repair_execution_eval/sql_repair_execution_eval_128.jsonl` | `scripts/remote/prepare_sql_repair_execution_eval.py`; `scripts/remote/evaluate_sql_repair_execution.py` | Phase16a execution repair accuracy 81.25%，normalized SQL exact 28.12%；替代旧 0% exact-only 误导指标。 |
@@ -55,6 +56,102 @@
 3. Data Agent SFT/RL 的 tool-call 与 SQL 样本都应显式暴露同一套工具：`inspect_schema/list_tables/run_sql/final_answer` 或 `execute_sql`，不要让 SQL 样本只训练裸 SQL、tool 样本只训练 action JSON。
 4. 保留上游原始字段到 `metadata`，但训练消费字段必须统一。
 5. 文档样例必须从真实数据抽样；如果出于可读性做脱敏/缩短，需要标注“结构等价、非逐字样本”。
+
+## Phase18 Canonical Data Agent SFT
+
+Phase18 是对上面审计问题的直接修复：不继续混用 `AVAILABLE FUNCTIONS`、`AVAILABLE_TOOLS`、SQL-only prompt 和裸 SQL completion，而是把 SQL、tool-call、多轮样本统一渲染为 Data Agent action schema。
+
+远端数据目录：
+
+```text
+datasets/processed/phase18_canonical_data_agent_sft_20260702_155000_phase18
+```
+
+生成脚本：
+
+```text
+scripts/remote/prepare_phase18_canonical_data.py
+```
+
+训练脚本：
+
+```text
+scripts/remote/run_phase18_canonical_sft_ppu16.sh
+```
+
+Manifest 摘要：
+
+```json
+{
+  "dataset_id": "phase18_canonical_data_agent_sft",
+  "created_at": "2026-07-02",
+  "render_template_version": "phase18_data_agent_action_v1",
+  "action_schema_version": "data_agent_action_v1",
+  "counts": {
+    "total": 18750,
+    "train": 17982,
+    "validation": 768,
+    "pre_dedup_buckets": {
+      "phase5_tool": 4500,
+      "phase5_spider_low_weight": 1200,
+      "phase15_multiturn": 12000,
+      "phase17_sql": 7276,
+      "phase17_replay_action": 764
+    },
+    "source_counts": {
+      "phase18_multiturn_canonical": 11925,
+      "phase18_phase17_sql": 4444,
+      "phase18_phase5_spider_low_weight": 1200,
+      "phase18_phase5_tool": 705,
+      "phase18_phase17_replay_action": 476
+    }
+  }
+}
+```
+
+质量审计：
+
+```json
+{
+  "train_rows": 17982,
+  "available_tools_rows": 17982,
+  "old_available_functions_rows": 0,
+  "multi_user_marker_rows": 0,
+  "transcript_with_tool_rows": 6438,
+  "run_sql_calls": 8143
+}
+```
+
+处理策略：
+
+- 所有 SFT 行统一使用 `prompt/completion/source/mixture_source/loss_weight`。
+- 所有 prompt 统一使用 `AVAILABLE_TOOLS`。
+- SQL completion 统一表达为 `{"action":"tool_call","calls":[{"name":"run_sql","arguments":{"sql":"..."}}]}`。
+- Spider 缺 schema 行只保留为低权重 SQL format replay，`loss_weight <= 0.35`。
+- Multi-turn 样本保留中间 `ASSISTANT/TOOL` transcript，只去掉最后待生成的 assistant marker。
+
+完整样例：
+
+```json
+{
+  "id": "phase18-sql-phase5_spider_low_weight-spider-2296",
+  "prompt": "You are the main model of a Data Agent. Use the provided tools when they are needed, ask for clarification when required information is missing, refuse unsafe requests, or provide a final answer when no tool is needed. Return exactly one JSON object and no extra text.\n\nAllowed actions:\n{\"action\":\"tool_call\",\"calls\":[{\"name\":\"tool_name\",\"arguments\":{...}}]}\n{\"action\":\"clarify\",\"missing\":[\"field\"],\"message\":\"question\"}\n{\"action\":\"refuse\",\"message\":\"reason\"}\n{\"action\":\"final\",\"answer\":\"answer\"}\n\nAVAILABLE_TOOLS:\n[{\"name\":\"list_tables\",\"description\":\"List available database tables.\",\"input_schema\":{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}},{\"name\":\"describe_table\",\"description\":\"Return columns and types for one table.\",\"input_schema\":{\"type\":\"object\",\"required\":[\"table\"],\"properties\":{\"table\":{\"type\":\"string\"}},\"additionalProperties\":false}},{\"name\":\"run_sql\",\"description\":\"Execute one read-only SQLite SELECT query.\",\"input_schema\":{\"type\":\"object\",\"required\":[\"sql\"],\"properties\":{\"sql\":{\"type\":\"string\"}},\"additionalProperties\":false}},{\"name\":\"final_answer\",\"description\":\"Return the final natural-language answer to the user.\",\"input_schema\":{\"type\":\"object\",\"required\":[\"answer\"],\"properties\":{\"answer\":{\"type\":\"string\"}},\"additionalProperties\":false}}]\n\nDATABASE CONTEXT:\ndatabase: entrepreneur\nschema: not provided in this local Spider JSONL snapshot. Use the question and database id; do not invent non-SQL text.\n\nUSER:\nWhat are the names of people who are not entrepreneurs?\n\nASSISTANT:\n",
+  "completion": "{\"action\":\"tool_call\",\"calls\":[{\"arguments\":{\"sql\":\"SELECT Name FROM people WHERE People_ID NOT IN (SELECT People_ID FROM entrepreneur)\"},\"name\":\"run_sql\"}]}",
+  "source": "phase18_phase5_spider_low_weight",
+  "mixture_source": "sql_spider",
+  "loss_weight": 0.35,
+  "render_template_version": "phase18_data_agent_action_v1",
+  "action_schema_version": "data_agent_action_v1",
+  "metadata": {
+    "db_id": "entrepreneur",
+    "upstream_id": "spider-2296",
+    "upstream_source": "spider_train",
+    "has_value_hints": false
+  }
+}
+```
+
+预期影响：Phase18 主要目标不是单纯拉高 WikiSQL，而是减少 SQL/tool/multi-turn 之间的格式冲突。成功信号应同时看 Data Agent action/tool 指标、multi-turn probe、WikiSQL v2 和通用回归。
 
 ## 指标影响摘要
 
