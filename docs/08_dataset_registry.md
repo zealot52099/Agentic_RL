@@ -31,6 +31,31 @@
 | `data_agent_action_probe` | Tool/Data Agent 评测 | Data Agent JSON action/tool-call probe | 评测 | 2026-07-01 | 307 | `datasets/processed/phase16_followup_assets_20260701/data_agent_tool_action_probe.jsonl` | `scripts/remote/prepare_phase16_followup_assets.py` | 用于 JSON/action/tool name/args 回归，避免 SQL-only 训练损伤 tool-call。影响按 post-eval 更新。 |
 | `mcp_xlam_array_smoke` | Tool smoke | MCP array-format smoke probe | 评测 | 2026-07-01 | 5 | `datasets/processed/phase16_followup_assets_20260701/mcp_xlam_array_tool_probe.jsonl` | `scripts/remote/prepare_phase16_followup_assets.py` | 仅 smoke test，样本太少，不能作为 headline metric。 |
 
+## 2026-07-02 真实数据格式审计
+
+本节记录对远端真实 processed JSONL 的抽样审计。结论是：上一版本文档中的部分“完整样例”是目标格式示意，不是远端真实样本逐字复制；其中 `phase5_unified` 样例尤其需要修正。后续台账中的样例必须优先来自真实数据，若是目标 schema 示例，必须显式标注。
+
+| 数据集 | 真实消费字段 | 文档上一版是否完全一致 | 工具/schema 上下文实际位置 | 影响判断 |
+|---|---|---|---|---|
+| `phase5_unified` | `id,prompt,completion,mixture_source,source,loss_weight`，Spider 行额外有 `db_id` | 否。上一版写成 `messages/schema/completion/metadata`，与真实文件不一致 | 工具定义不在 top-level 字段，而是内嵌在 `prompt` 的 `AVAILABLE FUNCTIONS` 中 | 训练脚本可正常消费，但文档误导排查；SQL 行只有 `execute_sql` 工具和很弱 schema context，会限制 schema grounding。 |
+| `phase15_clean_v4` | `id,prompt,completion,source,mixture_source,loss_weight,phase15_bucket,dedup_key` 等 | 部分一致 | 多轮工具定义在 `prompt` 的 `AVAILABLE_TOOLS` 中，非 top-level | 对训练可用；但与 Phase5 的 `AVAILABLE FUNCTIONS` 命名不一致，会增加模型学习格式负担。 |
+| `phase16_sql_repair` | 统一为 SFT `prompt/completion`，额外带 `gold_sql/gold_result/value_hints/failure_type` 或 replay 字段 | 部分一致 | SQL repair 行通常无工具列表；multi-turn replay 行有 `AVAILABLE_TOOLS` | SQL 与 tool-call 数据形态割裂，容易造成 SQL-only 提升时 tool-call 回退。 |
+| `phase16c_grpo_train` | `id,query,solution,gold_sql,question,source,value_hints` | 部分一致 | 无工具列表；`query` 中包含 table、columns、sample rows、value hints | 适合 SQL execution GRPO；不训练 Data Agent action schema 或 tool selection。 |
+| `phase17_sql_error_sft` | 统一为 SFT `prompt/completion`，包含 Phase17 SQL 错例和 Phase16 replay | 部分一致 | SQL 错例无工具列表；multi-turn replay 有 `AVAILABLE_TOOLS` | 用于修复 SQL 失败模式；若比例过高，会进一步放大 SQL 与 tool-call 格式割裂。 |
+
+字段不完全一致分两层看：
+
+1. **训练器层面可以接受**：当前 SFT 训练器读取 `prompt/completion/loss_weight`，GRPO 读取 `query/solution`，所以 top-level 字段不同不会直接报错。
+2. **模型学习层面有真实风险**：同一阶段内 prompt 模板、工具命名、SQL schema 表达、completion action schema 不统一，会让小模型把能力学成碎片。表现通常是 JSON/action 格式稳定但 tool 泛化弱，SQL 可以在单一 probe 上提升但 Data Agent tool-call 或 multi-turn 指标回退。
+
+后续解决规则：
+
+1. 每个训练阶段必须定义一个 **stage-level canonical schema**，例如 SFT 统一 `prompt/completion/source/mixture_source/loss_weight`，RL 统一 `query/solution/verifier/task_type`。
+2. 每条样本增加 `render_template_version` 和 `action_schema_version`，区分 `AVAILABLE FUNCTIONS`、`AVAILABLE_TOOLS`、SQL-only prompt。
+3. Data Agent SFT/RL 的 tool-call 与 SQL 样本都应显式暴露同一套工具：`inspect_schema/list_tables/run_sql/final_answer` 或 `execute_sql`，不要让 SQL 样本只训练裸 SQL、tool 样本只训练 action JSON。
+4. 保留上游原始字段到 `metadata`，但训练消费字段必须统一。
+5. 文档样例必须从真实数据抽样；如果出于可读性做脱敏/缩短，需要标注“结构等价、非逐字样本”。
+
 ## 指标影响摘要
 
 | 数据/阶段 | 加入前参考 | 加入后观察 | 结论 |
@@ -91,27 +116,32 @@
 
 ```json
 {
-  "id": "phase5_spider_000001",
-  "source": "spider",
-  "schema": "data_agent_action_v1",
-  "messages": [
-    {
-      "role": "system",
-      "content": "You are a Data Agent. Return exactly one JSON action."
-    },
-    {
-      "role": "user",
-      "content": "For database spider:concert_singer, find the names of singers older than 30."
-    }
-  ],
-  "completion": "{\"action\":\"tool_call\",\"calls\":[{\"name\":\"execute_sql\",\"arguments\":{\"database\":\"spider:concert_singer\",\"sql\":\"SELECT name FROM singer WHERE age > 30\"}}]}",
-  "metadata": {
-    "action": "tool_call",
-    "task_family": "sql_generation",
-    "split": "train"
-  }
+  "id": "mcp-smoke-20260618-000289",
+  "prompt": "You are the main model of a data agent. Decide whether to call a tool, ask for clarification, or answer without tools. Return exactly one JSON object and no extra text. Use this schema: {\"action\":\"tool_call\",\"calls\":[{\"name\":\"tool_name\",\"arguments\":{...}}]} for tool calls; {\"action\":\"no_tool\",\"calls\":[]} when no tool is needed; {\"action\":\"clarify\",\"missing\":[\"field\"],\"message\":\"question\"} when required information is missing.\n\nAVAILABLE FUNCTIONS:\n[{\"server_id\":\"calendar\",\"tools\":[{\"name\":\"create_event\",\"description\":\"Create a calendar event.\",\"input_schema\":{\"type\":\"object\",\"required\":[\"title\",\"start\"],\"properties\":{\"title\":{\"type\":\"string\"},\"start\":{\"type\":\"string\"}}}}]},{\"server_id\":\"files\",\"tools\":[{\"name\":\"read_file\",\"description\":\"Read a text file.\",\"input_schema\":{\"type\":\"object\",\"required\":[\"path\"],\"properties\":{\"path\":{\"type\":\"string\"}}}},{\"name\":\"write_file\",\"description\":\"Write a text file.\",\"input_schema\":{\"type\":\"object\",\"required\":[\"path\",\"content\"],\"properties\":{\"path\":{\"type\":\"string\"},\"content\":{\"type\":\"string\"}}}}]}]\n\nUSER:\nWrite 'release approved' to /notes/release.txt.\n\nASSISTANT:\n",
+  "completion": "{\"action\":\"tool_call\",\"calls\":[{\"arguments\":{\"content\":\"release approved\",\"path\":\"/notes/release.txt\"},\"name\":\"write_file\"}]}",
+  "mixture_source": "mcp_positive",
+  "source": "mcp_sft_v2_all",
+  "loss_weight": 1.0
 }
 ```
+
+说明：真实 `phase5_unified` 文件没有 top-level `tools/messages/metadata` 字段。工具定义被渲染进 `prompt` 的 `AVAILABLE FUNCTIONS` 块；SQL/Spider 行也是同样的 `prompt/completion` 消费格式，但通常只暴露 `execute_sql` 工具和弱 schema context。
+
+### `phase5_unified` Spider/SQL 行真实样例
+
+```json
+{
+  "id": "spider-5824",
+  "prompt": "You are the main model of a data agent. Decide whether to call a tool, ask for clarification, or answer without tools. Return exactly one JSON object and no extra text. Use this schema: {\"action\":\"tool_call\",\"calls\":[{\"name\":\"tool_name\",\"arguments\":{...}}]} for tool calls; {\"action\":\"no_tool\",\"calls\":[]} when no tool is needed; {\"action\":\"clarify\",\"missing\":[\"field\"],\"message\":\"question\"} when required information is missing.\n\nAVAILABLE FUNCTIONS:\n[{\"description\":\"Execute a SQL query against the specified database.\",\"name\":\"execute_sql\",\"parameters\":{\"type\":\"object\",\"required\":[\"database\",\"sql\"],\"properties\":{\"database\":{\"type\":\"string\"},\"sql\":{\"type\":\"string\"}}}}]\n\nDATABASE CONTEXT:\ndatabase: workshop_paper\nschema: not provided in this local Spider JSONL snapshot. Use the question and database id; do not invent non-SQL text.\n\nUSER:\nWhat is the author of the submission with the highest score?\n\nASSISTANT:\n",
+  "completion": "{\"action\":\"tool_call\",\"calls\":[{\"arguments\":{\"database\":\"workshop_paper\",\"sql\":\"SELECT Author FROM submission ORDER BY Scores DESC LIMIT 1\"},\"name\":\"execute_sql\"}]}",
+  "mixture_source": "sql_spider",
+  "source": "spider_train",
+  "loss_weight": 1.3,
+  "db_id": "workshop_paper"
+}
+```
+
+影响：这一行能训练模型输出 Data Agent action 和调用 `execute_sql`，但不能充分训练 schema linking。因为 prompt 只有 database id，没有 Spider `tables.json` 中的表、列、外键、类型信息。后续 SQL 主训练必须补齐 schema/table/value context，否则模型会更像是在记 SQL 模式，而不是基于 schema 生成可执行 SQL。
 
 ### `phase15_clean_v4` Multi-turn SFT 样例
 
