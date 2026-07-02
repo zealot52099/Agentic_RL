@@ -1,5 +1,7 @@
 # 1. 数据收集与预处理
 
+> 数据集级台账、完整样例、创建日期、数量和加入后的指标影响统一维护在 `docs/08_dataset_registry.md`。本文档侧重数据处理原则和 schema；新增数据时需要同步更新台账。
+
 本文档记录 Agentic RL 项目的数据来源、原始格式、预处理脚本、处理后格式、产物路径和质量门槛。它服务于主计划 `agentic_rl_mastery_and_small_model_training_plan.md` 中的“数据体系”部分。
 
 这篇文档不是只讲 SFT 数据。它覆盖四类资产：

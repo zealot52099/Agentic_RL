@@ -1,5 +1,7 @@
 # 7. 实验过程记录
 
+> 每次实验使用的数据集、样本数量、完整样例和指标影响需要同步维护到 `docs/08_dataset_registry.md`。本文档记录实验过程，数据资产的长期台账以该文件为准。
+
 ## 实验目标与路线
 
 在 MCP 工具调用（Multi-Client Protocol tool-calling）场景下，验证 SFT→DPO→GRPO 三阶段强化学习 pipeline，并通过 BFCL V4 / SQL / Agentic 等多维度 benchmark 量化能力变化。
